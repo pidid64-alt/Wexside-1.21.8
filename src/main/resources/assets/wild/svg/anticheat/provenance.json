@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "assets": [
+    {
+      "id": "matrix",
+      "runtimeAsset": "wild:svg/anticheat/matrix.svg",
+      "publisherUrl": "https://matrix.rip/",
+      "sourceUrl": "https://matrix.rip/matrix.svg",
+      "status": "official-exact",
+      "sourceFormat": "svg",
+      "sourceSha256": "2C770A70968900EE8AD27E6BFC8FB1135DA21B3121BC63FC77E1882ED2550088",
+      "retrievedDate": "2026-08-20",
+      "license": "license-not-stated"
+    },
+    {
+      "id": "grim",
+      "runtimeAsset": "wild:svg/anticheat/grim.svg",
+      "publisherUrl": "https://grim.ac/",
+      "verificationUrl": "https://github.com/GrimAnticheat",
+      "sourceUrl": "https://grim.ac/favicon.png",
+      "status": "derived-vector-recreation",
+      "sourceFormat": "png",
+      "sourceSha256": "D386622AE914EC506CF6710823932D864DAD6A6180683CB1AC2796D879F27FFC",
+      "retrievedDate": "2026-08-20",
+      "license": "all-rights-reserved",
+      "derivation": "alpha-128 silhouette trace with normalized optical padding",
+      "trademarkApproval": false
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "presets": [
+    { "file": "meowscles.zip", "category": "models" },
+    { "file": "pride_month_pack.zip", "category": "models" }
+  ]
+}

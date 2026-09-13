@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "id": "wild",
+  "version": "1.21.8",
+  "name": "Wild",
+  "description": "",
+  "authors": [
+    "NONE"
+  ],
+  "contact": {
+    "homepage": "",
+    "issues": ""
+  },
+  "license": "MIT",
+  "icon": "assets/wild/ico.png",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "ru.wild.WildClient"
+    ]
+  },
+  "mixins": [
+    "wild_mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.18.4",
+    "fabric": "*",
+    "minecraft": "~1.21.8"
+  },
+  "suggests": {
+    "viafabricplus": ">=4.2.0"
+  },
+  "custom": {
+    "modmenu": {
+      "links": {
+        "Telegram": "https://t.me/wildclient"
+      }
+    }
+  }
+}

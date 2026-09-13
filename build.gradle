@@ -1,0 +1,48 @@
+plugins {
+    id 'fabric-loom' version '1.10.5'
+    id 'java'
+}
+
+group = 'ru.wild'
+version = '1.21.8'
+
+base {
+    archivesName = 'WildClient'
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    minecraft 'com.mojang:minecraft:1.21.8'
+    mappings 'net.fabricmc:yarn:1.21.8+build.1:v2'
+    modImplementation 'net.fabricmc:fabric-loader:0.19.5'
+    modImplementation 'net.fabricmc.fabric-api:fabric-api:0.136.1+1.21.8'
+
+    implementation 'org.java-websocket:Java-WebSocket:1.5.6'
+    implementation 'org.json:json:20230618'
+    implementation 'org.reflections:reflections:0.10.2'
+    implementation 'org.javassist:javassist:3.29.2-GA'
+    implementation 'io.netty:netty-codec-socks:4.1.101.Final'
+    implementation 'io.netty:netty-handler-proxy:4.1.101.Final'
+    implementation 'com.googlecode.soundlibs:jlayer:1.0.1.4'
+    implementation 'com.googlecode.soundlibs:mp3spi:1.9.5.4'
+    implementation 'com.googlecode.soundlibs:tritonus-share:0.3.7.4'
+
+    compileOnly files('libs/baritone-1.21.8-named.jar')
+    modLocalRuntime files('libs/baritone-1.21.8-named.jar')
+    modLocalRuntime files('libs/nether-pathfinder-1.4.1.jar')
+    compileOnly files('libs/mcef-fabric-2.1.6-1.21.4.jar')
+}
+
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(21)
+    withSourcesJar()
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 21
+    options.compilerArgs += ['-Xmaxerrs', '10000', '-Xmaxwarns', '0']
+}
