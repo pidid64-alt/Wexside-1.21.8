@@ -18,8 +18,8 @@ Fabric), а не только через `./gradlew runClient`.
 
 Результат: **`build/libs/WildClient-1.21.8.jar`** — это уже готовый мод для папки `mods/`.
 
-Промежуточный `build/libs/WildClient-1.21.8-base.jar` — это то, что делает Loom
-(наш код + maven-библиотеки). В `mods/` его класть **не нужно**.
+Промежуточный `build/libs/WildClient-1.21.8-base.jar` — это выход `remapJar`
+(только наш код и ресурсы). В `mods/` его класть **не нужно**.
 
 Готовые скрипты: `./build-for-launcher.sh` (Linux/macOS/Git-Bash) и `build-for-launcher.bat` (Windows).
 
@@ -27,28 +27,50 @@ Fabric), а не только через `./gradlew runClient`.
 
 ## Как устроена упаковка (Jar-in-Jar)
 
-Итоговый jar собирают **два** шага:
+Всё упаковывает **один** наш таск `:launcherJar`. Loom'овский `include()` не используется вообще:
 
-| Что | Кто упаковывает | Откуда |
-|---|---|---|
-| Java-WebSocket, json, reflections, javassist, netty-codec-socks, netty-handler-proxy, jlayer, mp3spi, tritonus-share | Loom, `include(...)` → таск `:processIncludeJars` | mavenCentral |
-| Baritone (`baritone-meteor`), nether-pathfinder | таск **`:launcherJar`** (наш) | `libs/*.jar` |
+| Что | Откуда |
+|---|---|
+| Java-WebSocket, json, reflections, javassist, netty-codec-socks, netty-handler-proxy, jlayer, mp3spi, tritonus-share | конфигурация `jijLibs` (mavenCentral, `transitive = false`) |
+| Baritone (`baritone-meteor`), nether-pathfinder | `libs/*.jar` |
+| MCEF (только с `-PincludeMcef=true`) | `libs/*.jar` |
 
-`:launcherJar` берёт `WildClient-1.21.8-base.jar`, кладёт локальные моды в `META-INF/jars/`
-и дописывает их в секцию `jars` файла `fabric.mod.json`.
+`:launcherJar` берёт `WildClient-1.21.8-base.jar` (это выход `remapJar` — наш код и ресурсы),
+кладёт каждый из jar-ов в `META-INF/jars/`, дописывает их в секцию `jars` файла
+`fabric.mod.json` и пишет `WildClient-1.21.8.jar`. Попутно:
 
-### Почему локальные моды нельзя просто `include(files(...))`
+- у maven-библиотек нет своего `fabric.mod.json`, поэтому он **генерируется**
+  (`id`/`version` берутся из настоящих maven-координат, не из имени файла) —
+  иначе Fabric Loader такой вложенный jar просто проигнорирует;
+- из Baritone **вырезается** его собственный `META-INF/jars/nether-pathfinder-1.4.1.jar`,
+  а nether-pathfinder кладётся рядом отдельным JiJ-модом: Fabric Loader читает вложенные
+  jar-ы **только одного уровня**, и в `-named` этот jar к тому же не был прописан в `jars`
+  → в лаунчере классы `dev.babbaj.pathfinder` не загрузились бы. Заодно минус ~1 МБ дубля;
+- из `build/libs/` удаляются устаревшие `WildClient-*.jar` от прошлых конфигураций,
+  чтобы случайно не положить в `mods/` старьё.
 
-Loom для Jar-in-Jar обязан знать **координаты модуля** (`group:name:version`) — по ним он
-формирует имя файла и метаданные. У `files('libs/....jar')` координат нет, поэтому таск
-`:processIncludeJars` падал так:
+### Почему не `include(...)`
+
+Loom для Jar-in-Jar требует от зависимости **координаты модуля** (`group:name:version`)
+и валидный **semver**. Оба условия здесь не выполняются:
 
 ```
 > Attempted to nest artifact baritone-1.21.8-named.jar which is not a module
   component and has no capabilities.
 ```
+— у `include(files('libs/....jar'))` координат нет вовсе, таск `:processIncludeJars` падает;
 
-Отсюда и разделение: maven-зависимости — через `include`, локальные jar-ы — через `:launcherJar`.
+```
+(0.3.7.4) is not valid semver for dependency com.googlecode.soundlibs:tritonus-share:0.3.7.4
+(1.9.5.4) is not valid semver for dependency com.googlecode.soundlibs:mp3spi:1.9.5.4
+(1.0.1.4) is not valid semver for dependency com.googlecode.soundlibs:jlayer:1.0.1.4
+(20230618) is not valid semver for dependency org.json:json:20230618
+```
+— у этих библиотек версии четырехсегментные/календарные, Loom их бракует.
+
+Поэтому `include` убран совсем, а его работу делает `:launcherJar`. Набор библиотек при этом
+ровно тот же: `jijLibs` объявлен с `transitive = false`, так что внутрь не попадают
+`netty-common`/`netty-buffer` (их и так даёт Minecraft) и `slf4j-api` (его даёт fabric-loader).
 
 ### Какой Baritone вшивается и почему
 
@@ -101,8 +123,21 @@ Java должна быть **21**.
 ## Частые проблемы
 
 **`Attempted to nest artifact ... is not a module component`**
-→ в `build.gradle` снова появился `include(files(...))`. Локальные jar-ы так включать нельзя,
-их пакует `:launcherJar`.
+→ в `build.gradle` снова появился `include(files(...))`. Локальные jar-ы так включать нельзя.
+
+**`... is not valid semver for dependency ...`**
+→ снова появился Loom'овский `include(...)` для библиотек с четырехсегментной версией
+(`jlayer:1.0.1.4`, `mp3spi:1.9.5.4`, `tritonus-share:0.3.7.4`, `json:20230618`).
+Их пакует `:launcherJar`, а не Loom.
+
+**В `build/libs/` несколько jar-ов и непонятно, какой класть в mods**
+→ класть нужно только `WildClient-1.21.8.jar`. `:launcherJar` сам удаляет устаревшие
+`WildClient-*.jar` (старые сборки со `baritone-1.21.8-SNAPSHOT` внутри в том числе),
+но если сомневаешься — снеси `build/libs/` руками и собери заново.
+
+**`java.io.IOException: Stream closed` внутри `:launcherJar`**
+→ уже исправлено: чтение jar-ов переведено с `ZipInputStream` на `ZipFile`.
+Если видишь это снова — значит ты на старом коммите, сделай `git pull`.
 
 **`NoClassDefFoundError: org/java_websocket/...` / `Baritone not found`**
 → в `mods/` лежит старый jar. Пересобери `./gradlew launcherJar` и проверь, что внутри есть
@@ -138,25 +173,31 @@ GRADLE_USER_HOME=D:\gradle-home
 
 ## Для разработчиков
 
-Новая **maven**-библиотека (упакуется автоматически):
+Новая **maven**-библиотека — добавь её в два места (обе строки рядом в `build.gradle`):
 
 ```gradle
-include(implementation('group:artifact:version'))
+implementation 'group:artifact:version'   // для компиляции и runClient
+jijLibs        'group:artifact:version'   // чтобы попала внутрь итогового jar
 ```
 
-Новый **локальный** мод из `libs/` (для компиляции + runClient):
+`jijLibs` объявлена с `transitive = false`, поэтому транзитивные зависимости внутрь не
+попадут (так же, как раньше вёл себя Loom'овский `include`). Если транзитивка реально
+нужна в рантайме — добавь её отдельной строкой.
+
+Новый **локальный** мод из `libs/`:
 
 ```gradle
-modImplementation files('libs/your-mod.jar')
-modLocalRuntime  files('libs/your-mod.jar')
+modImplementation files('libs/your-mod.jar')   // компиляция
+modLocalRuntime   files('libs/your-mod.jar')   // runClient
 ```
 
-и чтобы он попал внутрь итогового jar — добавь его в список `nestedLocalMods` в `build.gradle`:
+и чтобы он попал внутрь итогового jar — добавь строку в блок `toNest` внутри
+`tasks.register('launcherJar')`:
 
 ```gradle
-def nestedLocalMods = [
-    [file: file('libs/baritone-1.21.8-named.jar'),   entry: 'baritone-1.21.8-named.jar'],
-    [file: file('libs/nether-pathfinder-1.4.1.jar'), entry: 'nether-pathfinder-1.4.1.jar'],
-    [file: file('libs/your-mod.jar'),                entry: 'your-mod.jar'],   // <- вот так
-]
+toNest['your-mod.jar'] = file('libs/your-mod.jar')
 ```
+
+Если у такого jar-а нет своего `fabric.mod.json`, таск сгенерирует его сам
+(id/version возьмёт из имени файла); если есть — возьмёт существующий и только
+почистит битые ссылки в секции `jars`.
