@@ -154,10 +154,9 @@ tasks.register('launcherJar') {
         // --- 1. Что кладём внутрь (имя в META-INF/jars -> файл на диске) ---
         // параллельно запоминаем настоящие координаты maven-артефактов,
         // чтобы сгенерировать им корректный fabric.mod.json
-        def libMeta = [:]   // File -> [name:..., version:...]
-        def jijArtifacts = configurations.jijLibs.resolvedConfiguration.lenientConfiguration.artifacts
-        jijArtifacts.each { art ->
-            libMeta[art.file] = [name: art.moduleVersion.id.name, version: art.moduleVersion.id.version]
+        def libMeta = [:]   // абсолютный путь -> [name:..., version:...]
+        configurations.jijLibs.resolvedConfiguration.lenientConfiguration.artifacts.each { art ->
+            libMeta[art.file.absolutePath] = [name: art.moduleVersion.id.name, version: art.moduleVersion.id.version]
         }
 
         def toNest = new LinkedHashMap<String, File>()
@@ -220,7 +219,7 @@ tasks.register('launcherJar') {
             // у обычных maven-библиотек fabric.mod.json нет — генерируем,
             // иначе Fabric Loader проигнорирует такой вложенный jar
             if (innerFmj == null) {
-                def meta = libMeta[srcFile]
+                def meta = libMeta[srcFile.absolutePath]
                 def libName = meta?.name
                 def libVer = meta?.version
                 if (!libName || !libVer) {
