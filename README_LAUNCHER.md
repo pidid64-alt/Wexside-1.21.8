@@ -1,137 +1,203 @@
 # WildClient 1.21.8 — Запуск через лаунчер
 
-Теперь мод можно запускать через **любой лаунчер**, а не только через `./gradlew runClient`.
-
-## Что было исправлено
-
-Раньше зависимости (`Java-WebSocket`, `json`, `reflections`, `javassist`, `netty-proxy`, `jlayer` и т.д.) лежали в `src/main/resources/META-INF/jars/` вручную и не прописывались в `fabric.mod.json`. Из-за этого:
-
-- `./gradlew runClient` работал (там `modLocalRuntime`)
-- а в лаунчере Fabric Loader не видел эти библиотеки → краш
-
-**Сейчас:**
-
-1. В `build.gradle` все библиотеки помечены как `include(implementation(...))` — Loom сам упакует их в `META-INF/jars/` внутри итогового jar и пропишет секцию `jars` в `fabric.mod.json` (Jar-in-Jar).
-2. Локальные моды `baritone` и `nether-pathfinder` тоже упакованы внутрь через `include(files(...))` + `modImplementation`.
-3. Удалены старые ручные `META-INF/jars/` и `MANIFEST.MF` из ресурсов.
-4. Добавлены удобные таски `buildForLauncher` и `installToMods`.
-
-Итоговый файл: `build/libs/WildClient-1.21.8.jar` — **это уже готовый мод для папки mods**.
+Мод можно запускать через **любой лаунчер** (PrismLauncher, TL, Modrinth App, ванильный с
+Fabric), а не только через `./gradlew runClient`.
 
 ---
 
-## Быстрый старт
+## Команды
 
-### 1. Собрать jar
-
-**Linux / macOS:**
 ```bash
-./gradlew buildForLauncher
+./gradlew launcherJar                      # собрать мод для лаунчера
+./gradlew buildForLauncher                 # то же + инструкция в консоли
+./gradlew installToMods -PmodsDir=/path/to/mods   # собрать и сразу скопировать в mods
+./gradlew launcherJar -PincludeMcef=true   # дополнительно вшить MCEF (браузер)
+./gradlew runClient                        # dev-запуск (как раньше)
+./gradlew build                            # полная сборка (launcherJar запустится сам)
 ```
 
-**Windows:**
-```bat
-gradlew.bat buildForLauncher
+Результат: **`build/libs/WildClient-1.21.8.jar`** — это уже готовый мод для папки `mods/`.
+
+Промежуточный `build/libs/WildClient-1.21.8-base.jar` — это выход `remapJar`
+(только наш код и ресурсы). В `mods/` его класть **не нужно**.
+
+Готовые скрипты: `./build-for-launcher.sh` (Linux/macOS/Git-Bash) и `build-for-launcher.bat` (Windows).
+
+---
+
+## Как устроена упаковка (Jar-in-Jar)
+
+Всё упаковывает **один** наш таск `:launcherJar`. Loom'овский `include()` не используется вообще:
+
+| Что | Откуда |
+|---|---|
+| Java-WebSocket, json, reflections, javassist, netty-codec-socks, netty-handler-proxy, jlayer, mp3spi, tritonus-share | конфигурация `jijLibs` (mavenCentral, `transitive = false`) |
+| Baritone (`baritone-meteor`), nether-pathfinder | `libs/*.jar` |
+| MCEF (только с `-PincludeMcef=true`) | `libs/*.jar` |
+
+`:launcherJar` берёт `WildClient-1.21.8-base.jar` (это выход `remapJar` — наш код и ресурсы),
+кладёт каждый из jar-ов в `META-INF/jars/`, дописывает их в секцию `jars` файла
+`fabric.mod.json` и пишет `WildClient-1.21.8.jar`. Попутно:
+
+- у maven-библиотек нет своего `fabric.mod.json`, поэтому он **генерируется**
+  (`id`/`version` берутся из настоящих maven-координат, не из имени файла) —
+  иначе Fabric Loader такой вложенный jar просто проигнорирует;
+- из Baritone **вырезается** его собственный `META-INF/jars/nether-pathfinder-1.4.1.jar`,
+  а nether-pathfinder кладётся рядом отдельным JiJ-модом: Fabric Loader читает вложенные
+  jar-ы **только одного уровня**, и в `-named` этот jar к тому же не был прописан в `jars`
+  → в лаунчере классы `dev.babbaj.pathfinder` не загрузились бы. Заодно минус ~1 МБ дубля;
+- из `build/libs/` удаляются устаревшие `WildClient-*.jar` от прошлых конфигураций,
+  чтобы случайно не положить в `mods/` старьё.
+
+### Почему не `include(...)`
+
+Loom для Jar-in-Jar требует от зависимости **координаты модуля** (`group:name:version`)
+и валидный **semver**. Оба условия здесь не выполняются:
+
 ```
-
-Результат: `build/libs/WildClient-1.21.8.jar`
-
-Или просто:
-```bash
-./gradlew remapJar
+> Attempted to nest artifact baritone-1.21.8-named.jar which is not a module
+  component and has no capabilities.
 ```
+— у `include(files('libs/....jar'))` координат нет вовсе, таск `:processIncludeJars` падает;
 
-### 2. Подготовить профиль Fabric 1.21.8
+```
+(0.3.7.4) is not valid semver for dependency com.googlecode.soundlibs:tritonus-share:0.3.7.4
+(1.9.5.4) is not valid semver for dependency com.googlecode.soundlibs:mp3spi:1.9.5.4
+(1.0.1.4) is not valid semver for dependency com.googlecode.soundlibs:jlayer:1.0.1.4
+(20230618) is not valid semver for dependency org.json:json:20230618
+```
+— у этих библиотек версии четырехсегментные/календарные, Loom их бракует.
 
-Тебе нужен **Fabric Loader 0.19.5** для Minecraft 1.21.8.
+Поэтому `include` убран совсем, а его работу делает `:launcherJar`. Набор библиотек при этом
+ровно тот же: `jijLibs` объявлен с `transitive = false`, так что внутрь не попадают
+`netty-common`/`netty-buffer` (их и так даёт Minecraft) и `slf4j-api` (его даёт fabric-loader).
 
-#### Вариант A — PrismLauncher (рекомендуется)
-1. Создай новый инстанс → версия 1.21.8 → Fabric Loader 0.19.5
-2. В настройках инстанса → Mods → Скачай:
-   - `Fabric API 0.136.1+1.21.8` с Modrinth
-   - (опционально) `MCEF 2.1.6` если хочешь браузер
-3. Скопируй `WildClient-1.21.8.jar` в папку `mods/` инстанса
-4. Запускай
+### Какой Baritone вшивается и почему
 
-#### Вариант B — TL Legacy / Legacy Launcher / Официальный лаунчер
-1. Скачай `fabric-installer` с https://fabricmc.net/use/
-2. Запусти `fabric-installer.jar` → выбери 1.21.8 и Loader 0.19.5 → Install
-3. В лаунчере появится профиль `fabric-loader-1.21.8-0.19.5`
-4. Открой папку `.minecraft/mods` (или `%appdata%/.minecraft/mods`)
-5. Положи туда:
-   - `fabric-api-0.136.1+1.21.8.jar` (скачать с Modrinth/CurseForge)
-   - `WildClient-1.21.8.jar`
-6. Запускай профиль Fabric
+Вшивается **`libs/baritone-1.21.8-named.jar`**, а не `baritone-1.21.8-SNAPSHOT.jar`:
 
-#### Вариант C — Modrinth App
-1. Создай профиль Fabric 1.21.8
-2. Установи Fabric API
-3. Перетащи WildClient jar в mods
-4. Запускай
+- исходники клиента обращаются к обфусцированным членам этой сборки —
+  `Ternary.a / Ternary.b / Ternary.c` и `MovementHelper.a(BlockState)`
+  (см. `src/main/java/org/wild/mixin/MovementHelperMixin.java`).
+  В `-SNAPSHOT` поля называются `YES/MAYBE/NO` — компиляция с ним не проходит;
+- `-named` собран в mojmap, и в проде эти имена совпадают с официальным
+  `minecraft-1.21.8.jar`, а его refmap уже переведён в intermediary
+  (`net.minecraft.client.multiplayer.ClientChunkCache$Storage → class_631$class_3681`),
+  то есть миксины Baritone применяются и в лаунчере;
+- `-SNAPSHOT` (intermediary) **нельзя** класть в `runClient`: в dev-окружении классы
+  Minecraft имеют yarn-имена, и все миксины Baritone отвалятся.
 
-### 3. Структура mods для лаунчера
+Дополнительно `:launcherJar` вычищает из Baritone его собственный
+`META-INF/jars/nether-pathfinder-1.4.1.jar` и кладёт nether-pathfinder рядом, как отдельный
+JiJ-мод: Fabric Loader читает вложенные jar-ы **только одного уровня**, поэтому
+nether-pathfinder внутри Baritone в лаунчере просто не загрузился бы
+(в `-named` он к тому же не был прописан в `jars`). Побочный плюс — минус ~1 МБ дубля.
+
+---
+
+## Установка в лаунчер
+
+1. Собери jar: `./gradlew launcherJar`
+2. Сделай профиль **Minecraft 1.21.8 + Fabric Loader 0.19.5**
+   (PrismLauncher: новый инстанс → 1.21.8 → Fabric 0.19.5;
+   официальный лаунчер: `fabric-installer.jar` с https://fabricmc.net/use/)
+3. Скачай **Fabric API 0.136.1+1.21.8** — https://modrinth.com/mod/fabric-api
+4. Положи в `mods/`:
 
 ```
 mods/
-├── WildClient-1.21.8.jar        <- наш мод (внутри уже Baritone + все либы)
+├── WildClient-1.21.8.jar          <- наш мод (Baritone + nether-pathfinder + либы внутри)
 ├── fabric-api-0.136.1+1.21.8.jar
-└── (опционально) mcef-fabric-2.1.6-1.21.4.jar
+└── mcef-fabric-2.1.6-1.21.4.jar   <- опционально, только если нужен браузер
 ```
 
-**Важно:** `baritone-1.21.8-named.jar` и `nether-pathfinder` уже ВНУТРИ WildClient jar, отдельно класть не нужно!
+Baritone и nether-pathfinder **отдельно класть не нужно** — они уже внутри.
+MCEF по умолчанию не вшивается (большой + требует нативные либы); если нужен — либо
+положи `libs/mcef-fabric-2.1.6-1.21.4.jar` рядом в `mods/`, либо собери с
+`-PincludeMcef=true`.
 
-Если хочешь MCEF (браузер/ютуб плеер), положи `mcef-fabric-2.1.6-1.21.4.jar` отдельно в mods — он большой и по умолчанию не встроен.
-
----
-
-## Команды Gradle
-
-```bash
-./gradlew remapJar              # собрать jar для лаунчера
-./gradlew buildForLauncher      # то же + инструкция в консоли
-./gradlew installToMods -PmodsDir=/path/to/mods  # собрать и сразу скопировать
-./gradlew runClient             # старый dev-запуск (все еще работает)
-./gradlew build                 # полная сборка + sources jar
-```
+Java должна быть **21**.
 
 ---
 
 ## Частые проблемы
 
-**Краш `NoClassDefFoundError: org/java_websocket/...`**
-→ Ты используешь старый jar до фикса. Пересобери через `remapJar`. Новый jar должен быть ~8-12 MB (внутри все либы).
+**`Attempted to nest artifact ... is not a module component`**
+→ в `build.gradle` снова появился `include(files(...))`. Локальные jar-ы так включать нельзя.
 
-**Краш `Baritone not found`**
-→ В новом jar Baritone уже внутри. Если все равно краш — проверь что ты не удалил `include(files('libs/baritone...'))` из build.gradle.
+**`... is not valid semver for dependency ...`**
+→ снова появился Loom'овский `include(...)` для библиотек с четырехсегментной версией
+(`jlayer:1.0.1.4`, `mp3spi:1.9.5.4`, `tritonus-share:0.3.7.4`, `json:20230618`).
+Их пакует `:launcherJar`, а не Loom.
 
-**Не запускается в лаунчере, но работает через runClient**
-→ Убедись что версия Java 21 (Fabric 1.21.8 требует Java 21). В PrismLauncher: Settings → Java → Java 21.
+**В `build/libs/` несколько jar-ов и непонятно, какой класть в mods**
+→ класть нужно только `WildClient-1.21.8.jar`. `:launcherJar` сам удаляет устаревшие
+`WildClient-*.jar` (старые сборки со `baritone-1.21.8-SNAPSHOT` внутри в том числе),
+но если сомневаешься — снеси `build/libs/` руками и собери заново.
 
-**MCEF не работает**
-→ MCEF требует отдельный мод + нативные либы. Положи `mcef-fabric-2.1.6-1.21.4.jar` в mods и запускай.
+**`java.io.IOException: Stream closed` внутри `:launcherJar`**
+→ уже исправлено: чтение jar-ов переведено с `ZipInputStream` на `ZipFile`.
+Если видишь это снова — значит ты на старом коммите, сделай `git pull`.
+
+**`NoClassDefFoundError: org/java_websocket/...` / `Baritone not found`**
+→ в `mods/` лежит старый jar. Пересобери `./gradlew launcherJar` и проверь, что внутри есть
+`META-INF/jars/` (`unzip -l build/libs/WildClient-1.21.8.jar | grep META-INF/jars`).
+
+**В логе сборки warning `Cannot find target for @Overwrite method in baritone.pathing.movement.MovementHelper`**
+→ это **нормально**, сборку не ломает. `MovementHelperMixin` целится в обфусцированный
+`MovementHelper.a(BlockState)`, которого нет в yarn-маппингах, поэтому Loom не может его
+переименовать и оставляет как есть. Именно в таком виде он и попадает в прод, где Baritone
+тоже лежит в mojmap — то есть в лаунчере миксин применяется.
+
+**Краш на миксине Baritone / `ClassNotFoundException: baritone...`**
+→ в `libs/` подменили сборку Baritone. Нужен именно `baritone-1.21.8-named.jar`
+(см. раздел «Какой Baritone вшивается»).
+
+**Работает в `runClient`, но не в лаунчере**
+→ проверь Java 21, Fabric Loader 0.19.5, наличие Fabric API и что в `mods/` нет
+второго (отдельного) Baritone — будет конфликт по id `baritone-meteor`.
+
+**Диск C: забит (0 байт свободно)**
+→ Gradle, Loom и все кэши живут в `C:\Users\<ты>\.gradle`. При нехватке места Loom портит
+свой кэш (`ACQUIRED_PREVIOUS_OWNER_DISOWNED`, `class file for net.minecraft.class_2338 not
+found`). Освободи место, потом `./gradlew --stop` и удали `.gradle/caches/fabric-loom`.
+Перенести кэш на другой диск можно так:
+
+```
+GRADLE_USER_HOME=D:\gradle-home
+```
+
+(в Git-Bash: `export GRADLE_USER_HOME=/d/gradle-home` перед `./gradlew`).
 
 ---
 
 ## Для разработчиков
 
-Если добавляешь новую библиотеку:
+Новая **maven**-библиотека — добавь её в два места (обе строки рядом в `build.gradle`):
 
 ```gradle
-// В build.gradle
-include(implementation('group:artifact:version'))
-implementation 'group:artifact:version'
+implementation 'group:artifact:version'   // для компиляции и runClient
+jijLibs        'group:artifact:version'   // чтобы попала внутрь итогового jar
 ```
 
-Loom сам упакует ее.
+`jijLibs` объявлена с `transitive = false`, поэтому транзитивные зависимости внутрь не
+попадут (так же, как раньше вёл себя Loom'овский `include`). Если транзитивка реально
+нужна в рантайме — добавь её отдельной строкой.
 
-Если добавляешь новый локальный мод jar:
+Новый **локальный** мод из `libs/`:
 
 ```gradle
-modImplementation files('libs/your-mod.jar')
-modLocalRuntime files('libs/your-mod.jar')
-include(files('libs/your-mod.jar'))
+modImplementation files('libs/your-mod.jar')   // компиляция
+modLocalRuntime   files('libs/your-mod.jar')   // runClient
 ```
 
----
+и чтобы он попал внутрь итогового jar — добавь строку в блок `toNest` внутри
+`tasks.register('launcherJar')`:
 
-Готово! Теперь можно запускать через любой лаунчер.
+```gradle
+toNest['your-mod.jar'] = file('libs/your-mod.jar')
+```
+
+Если у такого jar-а нет своего `fabric.mod.json`, таск сгенерирует его сам
+(id/version возьмёт из имени файла); если есть — возьмёт существующий и только
+почистит битые ссылки в секции `jars`.

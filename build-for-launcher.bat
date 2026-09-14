@@ -1,6 +1,6 @@
 @echo off
 echo === WildClient 1.21.8 - Сборка для лаунчера ===
-call gradlew.bat remapJar --no-daemon
+call .\gradlew.bat launcherJar --no-daemon
 set JAR=build\libs\WildClient-1.21.8.jar
 if exist %JAR% (
   echo.
