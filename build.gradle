@@ -50,21 +50,25 @@ dependencies {
     implementation 'com.googlecode.soundlibs:tritonus-share:0.3.7.4'
 
     // === Локальные моды ===
-    // Baritone - основной бот-мод
+    // ВАЖНО: Loom НЕ умеет делать include(files(...)) — для Jar-in-Jar ему нужны
+    // нормальные модульные координаты (group:name:version), иначе таск
+    // :processIncludeJars падает с "Attempted to nest artifact ... which is not a
+    // module component and has no capabilities".
+    // Поэтому локальные jar-ы здесь только для компиляции и runClient,
+    // а внутрь итогового jar их упаковывает таск :launcherJar (см. ниже).
+
+    // Baritone - основной бот-мод (needed: -named, там Ternary.a/b/c и метод a(BlockState))
     modImplementation files('libs/baritone-1.21.8-named.jar')
     modLocalRuntime files('libs/baritone-1.21.8-named.jar')
-    include(files('libs/baritone-1.21.8-named.jar'))
     compileOnly files('libs/baritone-1.21.8-named.jar')
 
     // Nether Pathfinder - для Baritone
     modImplementation files('libs/nether-pathfinder-1.4.1.jar')
     modLocalRuntime files('libs/nether-pathfinder-1.4.1.jar')
-    include(files('libs/nether-pathfinder-1.4.1.jar'))
 
-    // MCEF - опционально, для браузера в игре (если нужно, раскомментируй include)
+    // MCEF - опционально, для браузера в игре
     compileOnly files('libs/mcef-fabric-2.1.6-1.21.4.jar')
     modLocalRuntime files('libs/mcef-fabric-2.1.6-1.21.4.jar')
-    // include(files('libs/mcef-fabric-2.1.6-1.21.4.jar')) // включи если хочешь встроить MCEF
 }
 
 java {
@@ -90,30 +94,214 @@ tasks.named('processResources') {
     exclude('META-INF/MANIFEST.MF')
 }
 
-// === Настройка выходного jar для лаунчера ===
+// === Настройка выходного jar ===
 tasks.named('remapJar') {
-    archiveFileName = "WildClient-1.21.8.jar"
-    // Включаем все include зависимости внутрь
+    archiveFileName = "WildClient-1.21.8-base.jar"
+    // Сюда Loom кладёт только include(...) из maven (Java-WebSocket, json, reflections, ...)
+    // Локальные моды (Baritone, nether-pathfinder) докладываются таском :launcherJar
+    finalizedBy 'launcherJar'
 }
 
 tasks.named('remapSourcesJar') {
     archiveFileName = "WildClient-1.21.8-sources.jar"
 }
 
+// =====================================================================
+//  :launcherJar — собирает финальный мод для папки mods любого лаунчера
+//
+//  build/libs/WildClient-1.21.8-base.jar  (то, что сделал Loom)
+//            +
+//  libs/baritone-1.21.8-named.jar         (с вычищенным дублем nether-pathfinder
+//  libs/nether-pathfinder-1.4.1.jar        и исправленным fabric.mod.json)
+//  [libs/mcef-*.jar  при -PincludeMcef=true]
+//            ↓
+//  build/libs/WildClient-1.21.8.jar       (Jar-in-Jar, готов для mods/)
+// =====================================================================
+def launcherJarFile = layout.buildDirectory.file("libs/WildClient-${version}.jar")
+def baseJarFile     = layout.buildDirectory.file("libs/WildClient-${version}-base.jar")
+
+// Какие локальные jar-ы вкладываем и под какими именами они лягут в META-INF/jars/
+def nestedLocalMods = [
+    [file: file('libs/baritone-1.21.8-named.jar'),   entry: 'baritone-1.21.8-named.jar'],
+    [file: file('libs/nether-pathfinder-1.4.1.jar'), entry: 'nether-pathfinder-1.4.1.jar'],
+]
+
+tasks.register('launcherJar') {
+    group = 'wild'
+    description = 'Собирает финальный WildClient-1.21.8.jar с Baritone и nether-pathfinder внутри (Jar-in-Jar)'
+    dependsOn 'remapJar'
+
+    inputs.file(baseJarFile)
+    inputs.files(nestedLocalMods*.file)
+    inputs.property('includeMcef', String.valueOf(project.hasProperty('includeMcef')))
+    outputs.file(launcherJarFile)
+
+    doLast {
+        def base = baseJarFile.get().asFile
+        if (!base.exists()) {
+            throw new GradleException("Не найден базовый jar: ${base} — сначала собери :remapJar")
+        }
+
+        def out = launcherJarFile.get().asFile
+        def includeMcef = project.hasProperty('includeMcef')
+        def mcefFile = file('libs/mcef-fabric-2.1.6-1.21.4.jar')
+
+        // jar-ы, которые реально положим внутрь (имя в META-INF/jars -> исходный файл)
+        def toNest = [:]
+        nestedLocalMods.each { m ->
+            if (!m.file.exists()) {
+                throw new GradleException("Не найден локальный мод: ${m.file}")
+            }
+            toNest[m.entry] = m.file
+        }
+        if (includeMcef) {
+            if (!mcefFile.exists()) {
+                throw new GradleException("Не найден MCEF: ${mcefFile}")
+            }
+            toNest[mcefFile.name] = mcefFile
+        }
+
+        // --- 1. Читаем базовый jar (там уже есть META-INF/jars от Loom'а) ---
+        def baseBytes = [:]   // path -> byte[]
+        def fmjText = null
+        base.withInputStream { is ->
+            def zin = new java.util.zip.ZipInputStream(is)
+            def e
+            while ((e = zin.nextEntry) != null) {
+                if (e.isDirectory()) { zin.closeEntry(); continue }
+                def bytes = zin.bytes
+                if (e.name == 'fabric.mod.json') {
+                    fmjText = new String(bytes, 'UTF-8')
+                } else {
+                    baseBytes[e.name] = bytes
+                }
+                zin.closeEntry()
+            }
+            zin.close()
+        }
+        if (fmjText == null) {
+            throw new GradleException("В ${base.name} нет fabric.mod.json — это не тот jar")
+        }
+
+        // --- 2. Готовим вложенные jar-ы ---
+        def jsonSlurper = new groovy.json.JsonSlurper()
+        def nestedEntries = [:]  // имя в META-INF/jars -> byte[] готового jar
+        toNest.each { entryName, srcFile ->
+            def innerFmj = null
+            def innerBytes = [:]
+            srcFile.withInputStream { is ->
+                def zin = new java.util.zip.ZipInputStream(is)
+                def e
+                while ((e = zin.nextEntry) != null) {
+                    def ename = e.name
+                    if (!e.isDirectory()) {
+                        // выкидываем уже вложенные jar-ы: Fabric Loader читает JiJ
+                        // только одного уровня, дубли внутри дублей не нужны
+                        if (!(ename.startsWith('META-INF/jars/') && ename.endsWith('.jar'))) {
+                            def bytes = zin.bytes
+                            if (ename == 'fabric.mod.json') {
+                                innerFmj = jsonSlurper.parseText(new String(bytes, 'UTF-8'))
+                            } else {
+                                innerBytes[ename] = bytes
+                            }
+                        }
+                    }
+                    zin.closeEntry()
+                }
+                zin.close()
+            }
+            if (innerFmj == null) {
+                throw new GradleException("${srcFile.name}: нет fabric.mod.json — Fabric Loader такой jar не загрузит")
+            }
+            // убираем ссылки на вычищенные вложенные jar-ы
+            if (innerFmj.jars instanceof List) {
+                def kept = innerFmj.jars.findAll { j -> innerBytes.containsKey(j.file?.toString()) }
+                if (kept) {
+                    innerFmj.jars = kept
+                } else {
+                    innerFmj.remove('jars')
+                }
+            }
+            def innerFmjBytes = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(innerFmj)).getBytes('UTF-8')
+
+            def bos = new ByteArrayOutputStream()
+            def zout2 = new java.util.zip.ZipOutputStream(bos)
+            zout2.setLevel(java.util.zip.Deflater.DEFAULT_COMPRESSION)
+            zout2.putNextEntry(new java.util.zip.ZipEntry('fabric.mod.json'))
+            zout2.write(innerFmjBytes)
+            zout2.closeEntry()
+            innerBytes.keySet().sort().each { iname ->
+                zout2.putNextEntry(new java.util.zip.ZipEntry(iname))
+                zout2.write(innerBytes[iname])
+                zout2.closeEntry()
+            }
+            zout2.close()
+            nestedEntries[entryName] = bos.toByteArray()
+        }
+
+        // --- 3. Прописываем секцию "jars" в нашем fabric.mod.json ---
+        def fmj = jsonSlurper.parseText(fmjText)
+        def jars = (fmj.jars instanceof List) ? new ArrayList(fmj.jars) : []
+        // то, что уже добавил Loom
+        def existing = new HashSet(jars.collect { it.file?.toString() })
+        baseBytes.keySet().each { name ->
+            if (name.startsWith('META-INF/jars/') && name.endsWith('.jar') && !existing.contains(name)) {
+                jars << [file: name]
+                existing << name
+            }
+        }
+        nestedEntries.keySet().each { entryName ->
+            def path = "META-INF/jars/${entryName}"
+            if (!existing.contains(path)) {
+                jars << [file: path]
+                existing << path
+            }
+        }
+        fmj.jars = jars
+        def newFmj = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(fmj)).getBytes('UTF-8')
+
+        // --- 4. Пишем итоговый jar ---
+        def payload = [:]
+        payload.putAll(baseBytes)
+        nestedEntries.each { entryName, bytes -> payload["META-INF/jars/${entryName}"] = bytes }
+
+        out.parentFile.mkdirs()
+        out.withOutputStream { os ->
+            def zout = new java.util.zip.ZipOutputStream(os)
+            zout.setLevel(java.util.zip.Deflater.DEFAULT_COMPRESSION)
+            zout.putNextEntry(new java.util.zip.ZipEntry('fabric.mod.json'))
+            zout.write(newFmj)
+            zout.closeEntry()
+            payload.keySet().sort().each { name ->
+                zout.putNextEntry(new java.util.zip.ZipEntry(name))
+                zout.write(payload[name])
+                zout.closeEntry()
+            }
+            zout.close()
+        }
+
+        println ""
+        println "  WildClient jar: ${out}"
+        println "  Размер: ${String.format('%.2f', out.length() / 1024d / 1024d)} MB"
+        println "  Вложено (${jars.size()}):"
+        jars.each { println "    - ${it.file}" }
+    }
+}
+
 // Удобный таск для сборки под лаунчер
 tasks.register('buildForLauncher') {
     group = 'wild'
     description = 'Собирает мод для запуска через лаунчер (Prism, TL, Vanilla Launcher с Fabric)'
-    dependsOn 'remapJar'
+    dependsOn 'launcherJar'
     doLast {
-        def jarFile = file("build/libs/WildClient-1.21.8.jar")
+        def jarFile = launcherJarFile.get().asFile
         if (jarFile.exists()) {
             println ""
             println "=========================================="
             println "  WILD CLIENT - СБОРКА ДЛЯ ЛАУНЧЕРА ГОТОВА"
             println "=========================================="
             println "  Файл: ${jarFile.absolutePath}"
-            println "  Размер: ${jarFile.length() / 1024 / 1024} MB"
+            println "  Размер: ${String.format('%.2f', jarFile.length() / 1024d / 1024d)} MB"
             println ""
             println "  Как запустить:"
             println "  1. Установи Fabric Loader 0.19.5 для 1.21.8"
@@ -132,8 +320,8 @@ tasks.register('buildForLauncher') {
 tasks.register('installToMods', Copy) {
     group = 'wild'
     description = 'Копирует собранный jar в папку mods (укажи -PmodsDir=/path/to/mods)'
-    dependsOn 'remapJar'
-    from file("build/libs/WildClient-1.21.8.jar")
+    dependsOn 'launcherJar'
+    from launcherJarFile
     into file(findProperty('modsDir') ?: 'build/mods')
     doLast {
         println "Скопировано в: ${findProperty('modsDir') ?: 'build/mods'}"

@@ -2,7 +2,7 @@
 set -e
 echo "=== WildClient 1.21.8 - Сборка для лаунчера ==="
 chmod +x gradlew
-./gradlew remapJar --no-daemon
+./gradlew launcherJar --no-daemon
 JAR="build/libs/WildClient-1.21.8.jar"
 if [ -f "$JAR" ]; then
   SIZE=$(du -h "$JAR" | cut -f1)
