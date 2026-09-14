@@ -20,20 +20,51 @@ dependencies {
     modImplementation 'net.fabricmc:fabric-loader:0.19.5'
     modImplementation 'net.fabricmc.fabric-api:fabric-api:0.136.1+1.21.8'
 
+    // === Библиотеки, которые будут упакованы внутрь мода (Jar-in-Jar) ===
+    // Loom автоматически добавит их в META-INF/jars и пропишет в fabric.mod.json
+    include(implementation('org.java-websocket:Java-WebSocket:1.5.6'))
     implementation 'org.java-websocket:Java-WebSocket:1.5.6'
+
+    include(implementation('org.json:json:20230618'))
     implementation 'org.json:json:20230618'
+
+    include(implementation('org.reflections:reflections:0.10.2'))
     implementation 'org.reflections:reflections:0.10.2'
+
+    include(implementation('org.javassist:javassist:3.29.2-GA'))
     implementation 'org.javassist:javassist:3.29.2-GA'
+
+    include(implementation('io.netty:netty-codec-socks:4.1.101.Final'))
     implementation 'io.netty:netty-codec-socks:4.1.101.Final'
+
+    include(implementation('io.netty:netty-handler-proxy:4.1.101.Final'))
     implementation 'io.netty:netty-handler-proxy:4.1.101.Final'
+
+    include(implementation('com.googlecode.soundlibs:jlayer:1.0.1.4'))
     implementation 'com.googlecode.soundlibs:jlayer:1.0.1.4'
+
+    include(implementation('com.googlecode.soundlibs:mp3spi:1.9.5.4'))
     implementation 'com.googlecode.soundlibs:mp3spi:1.9.5.4'
+
+    include(implementation('com.googlecode.soundlibs:tritonus-share:0.3.7.4'))
     implementation 'com.googlecode.soundlibs:tritonus-share:0.3.7.4'
 
-    compileOnly files('libs/baritone-1.21.8-named.jar')
+    // === Локальные моды ===
+    // Baritone - основной бот-мод
+    modImplementation files('libs/baritone-1.21.8-named.jar')
     modLocalRuntime files('libs/baritone-1.21.8-named.jar')
+    include(files('libs/baritone-1.21.8-named.jar'))
+    compileOnly files('libs/baritone-1.21.8-named.jar')
+
+    // Nether Pathfinder - для Baritone
+    modImplementation files('libs/nether-pathfinder-1.4.1.jar')
     modLocalRuntime files('libs/nether-pathfinder-1.4.1.jar')
+    include(files('libs/nether-pathfinder-1.4.1.jar'))
+
+    // MCEF - опционально, для браузера в игре (если нужно, раскомментируй include)
     compileOnly files('libs/mcef-fabric-2.1.6-1.21.4.jar')
+    modLocalRuntime files('libs/mcef-fabric-2.1.6-1.21.4.jar')
+    // include(files('libs/mcef-fabric-2.1.6-1.21.4.jar')) // включи если хочешь встроить MCEF
 }
 
 java {
@@ -45,4 +76,66 @@ tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
     options.release = 21
     options.compilerArgs += ['-Xmaxerrs', '10000', '-Xmaxwarns', '0']
+}
+
+loom {
+    // Loom сам сгенерирует META-INF/jars и секцию jars в fabric.mod.json
+    // для всех зависимостей помеченных как include()
+}
+
+tasks.named('processResources') {
+    // Удаляем старые ручные META-INF/jars из ресурсов, чтобы не было дублей
+    // Теперь Loom сам управляет JiJ
+    exclude('META-INF/jars/**')
+    exclude('META-INF/MANIFEST.MF')
+}
+
+// === Настройка выходного jar для лаунчера ===
+tasks.named('remapJar') {
+    archiveFileName = "WildClient-1.21.8.jar"
+    // Включаем все include зависимости внутрь
+}
+
+tasks.named('remapSourcesJar') {
+    archiveFileName = "WildClient-1.21.8-sources.jar"
+}
+
+// Удобный таск для сборки под лаунчер
+tasks.register('buildForLauncher') {
+    group = 'wild'
+    description = 'Собирает мод для запуска через лаунчер (Prism, TL, Vanilla Launcher с Fabric)'
+    dependsOn 'remapJar'
+    doLast {
+        def jarFile = file("build/libs/WildClient-1.21.8.jar")
+        if (jarFile.exists()) {
+            println ""
+            println "=========================================="
+            println "  WILD CLIENT - СБОРКА ДЛЯ ЛАУНЧЕРА ГОТОВА"
+            println "=========================================="
+            println "  Файл: ${jarFile.absolutePath}"
+            println "  Размер: ${jarFile.length() / 1024 / 1024} MB"
+            println ""
+            println "  Как запустить:"
+            println "  1. Установи Fabric Loader 0.19.5 для 1.21.8"
+            println "     (через PrismLauncher, Modrinth App или fabric-installer)"
+            println "  2. Скачай Fabric API 0.136.1+1.21.8 и положи в mods/"
+            println "  3. Скопируй WildClient-1.21.8.jar в mods/"
+            println "  4. Запускай через лаунчер!"
+            println "=========================================="
+        } else {
+            println "ОШИБКА: jar не найден: ${jarFile}"
+        }
+    }
+}
+
+// Таск для быстрой установки в локальный профиль (если указан путь)
+tasks.register('installToMods', Copy) {
+    group = 'wild'
+    description = 'Копирует собранный jar в папку mods (укажи -PmodsDir=/path/to/mods)'
+    dependsOn 'remapJar'
+    from file("build/libs/WildClient-1.21.8.jar")
+    into file(findProperty('modsDir') ?: 'build/mods')
+    doLast {
+        println "Скопировано в: ${findProperty('modsDir') ?: 'build/mods'}"
+    }
 }
