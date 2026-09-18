@@ -1,37 +1,13 @@
 package ru.wild.render;
 
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.util.Window;
 import org.lwjgl.glfw.GLFW;
 import org.lwjgl.opengl.GL11;
-import org.lwjgl.opengl.GL30;
 
 public final class GlCompatibilityProbe {
-   private static volatile int instance = -1;
    private static volatile Boolean data;
    private static volatile Boolean context;
 
    private GlCompatibilityProbe() {
-   }
-
-   public static void handle(int var0) {
-      if (var0 <= 0) {
-         instance = -1;
-      } else {
-         instance = process(var0) ? var0 : -1;
-      }
-   }
-
-   public static boolean process(int var0) {
-      if (var0 <= 0) {
-         return false;
-      }
-
-      try {
-         return GL30.glIsFramebuffer(var0);
-      } catch (Throwable var2) {
-         return false;
-      }
    }
 
    public static boolean handle() {
@@ -113,41 +89,6 @@ public final class GlCompatibilityProbe {
          return false;
       } else {
          return false;
-      }
-   }
-
-   public static void handle(MinecraftClient var0) {
-      if (var0 != null && var0.getWindow() != null) {
-         Window var1 = var0.getWindow();
-         int var2 = var1.getFramebufferWidth();
-         int var3 = var1.getFramebufferHeight();
-         if (var2 > 0 && var3 > 0) {
-            int var4 = instance;
-            if (var4 > 0 && !process(var4)) {
-               instance = -1;
-               var4 = -1;
-            }
-
-            if (var4 <= 0) {
-               var4 = GL11.glGetInteger(36006);
-            }
-
-            if (var4 > 0 && !process(var4)) {
-               instance = -1;
-               var4 = -1;
-            }
-
-            if (var4 > 0) {
-               GL30.glBindFramebuffer(36009, var4);
-               GL30.glBindFramebuffer(36008, var4);
-               GL11.glDrawBuffer(36064);
-               GL11.glReadBuffer(36064);
-            }
-
-            GL11.glViewport(0, 0, var2, var3);
-            GL11.glColorMask(true, true, true, true);
-            GL11.glDisable(3089);
-         }
       }
    }
 

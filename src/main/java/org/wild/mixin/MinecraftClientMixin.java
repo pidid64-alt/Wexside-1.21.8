@@ -38,7 +38,6 @@ import ru.wild.modules.misc.PvPSafe;
 import ru.wild.modules.misc.UnHook;
 import ru.wild.modules.player.NoDelay;
 import ru.wild.network.ServerSwitchGuard;
-import ru.wild.render.GlCompatibilityProbe;
 import ru.wild.render.RenderDiagnostics;
 import ru.wild.render.ScreenRenderDiagnostics;
 import ru.wild.render.shader.GuiRippleShader;
@@ -199,10 +198,6 @@ public abstract class MinecraftClientMixin {
                var3.mouse.lockCursor();
             }
          }
-      }
-
-      if (WildClient.drawProfile() && !UnHook.target && var1 != null && !(var1 instanceof FrameRenderListener)) {
-         GlCompatibilityProbe.handle(var3);
       }
    }
 

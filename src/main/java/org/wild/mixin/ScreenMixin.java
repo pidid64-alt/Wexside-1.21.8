@@ -18,14 +18,11 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import ru.wild.WildClient;
-import ru.wild.api.event.FrameRenderListener;
 import ru.wild.gui.theme.ThemePalette;
 import ru.wild.gui.theme.ThemePaletteRegistry;
-import ru.wild.render.GlCompatibilityProbe;
 import ru.wild.render.RenderDiagnostics;
 import ru.wild.render.ScreenRenderDiagnostics;
 import ru.wild.render.shader.GuiRippleShader;
-import ru.wild.render.shader.ScreenBackdropRenderer;
 
 @Mixin(Screen.class)
 public class ScreenMixin {
@@ -53,10 +50,8 @@ public class ScreenMixin {
    private void wild$diagRenderHead(DrawContext var1, int var2, int var3, float var4, CallbackInfo var5) {
       RenderDiagnostics.handle().apply();
       Screen var6 = (Screen)(Object)this;
-      if (!(var6 instanceof FrameRenderListener)) {
-         GlCompatibilityProbe.handle(MinecraftClient.getInstance());
-      }
-
+      // Screen.render only queues GUI work in 1.21.8. Do not bind an FBO here:
+      // the raw-menu target has already had its color attachment detached.
       ScreenRenderDiagnostics.handle(var6, "render.head");
    }
 
@@ -74,12 +69,11 @@ public class ScreenMixin {
       } else {
          MinecraftClient var7 = MinecraftClient.getInstance();
          if (var7 != null && var7.getWindow() != null) {
-            if (ScreenBackdropRenderer.handle().handle(var7, var2, var3, 1.0F, var6)) {
-               ScreenRenderDiagnostics.handle(var6, "renderBackground.backdrop", "shader-backdrop");
-               var5.cancel();
-            } else {
+            // Loading/progress screens also use the deferred GUI pass. Keep their
+            // background in DrawContext rather than drawing raw GL before that pass.
+            if (WildClient.prepare()) {
                wild$drawThemedBackdrop(var1, var7.getWindow().getScaledWidth(), var7.getWindow().getScaledHeight());
-               ScreenRenderDiagnostics.handle(var6, "renderBackground.backdrop", "gradient-fallback");
+               ScreenRenderDiagnostics.handle(var6, "renderBackground.backdrop", "queued-gradient");
                var5.cancel();
             }
          } else {

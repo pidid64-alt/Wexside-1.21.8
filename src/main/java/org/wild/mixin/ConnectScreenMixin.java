@@ -11,8 +11,9 @@ import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import ru.wild.WildClient;
+import ru.wild.modules.misc.UnHook;
 import ru.wild.render.ScreenRenderDiagnostics;
-import ru.wild.render.shader.ScreenBackdropRenderer;
 
 @Mixin(ConnectScreen.class)
 public abstract class ConnectScreenMixin extends Screen {
@@ -27,19 +28,21 @@ public abstract class ConnectScreenMixin extends Screen {
 
    @Inject(method = "render", at = @At("HEAD"), cancellable = true)
    private void wild$renderPremiumConnect(DrawContext var1, int var2, int var3, float var4, CallbackInfo var5) {
+      if (!WildClient.prepare() || UnHook.target) {
+         return;
+      }
+
       MinecraftClient var6 = MinecraftClient.getInstance();
       ConnectScreen var7 = (ConnectScreen)(Object)this;
       if (var6 == null) {
          ScreenRenderDiagnostics.handle("ConnectScreen.render", var7, "client missing", null);
       } else {
-         if (!ScreenBackdropRenderer.handle().handle(var6, var2, var3, 1.0F, var7)) {
-            int var8 = var6.getWindow() != null ? var6.getWindow().getScaledWidth() : this.width;
-            int var9 = var6.getWindow() != null ? var6.getWindow().getScaledHeight() : this.height;
-            var1.fillGradient(0, 0, var8, var9, -16447732, -15658213);
-            ScreenRenderDiagnostics.handle(var7, "render.safe-fallback", "backdrop unavailable");
-         } else {
-            ScreenRenderDiagnostics.handle(var7, "render.custom", "connect-status overlay");
-         }
+         // In 1.21.8 DrawContext submits GUI work for a later render pass.
+         // Raw GL here draws into an unrelated FBO and can be cleared before
+         // presentation. Queue the backdrop and status with the widgets instead.
+         var1.fillGradient(0, 0, this.width, this.height, -16447732, -15658213);
+         var1.drawCenteredTextWithShadow(var6.textRenderer, this.status, this.width / 2, this.height / 2 - 50, 0xFFFFFFFF);
+         ScreenRenderDiagnostics.handle(var7, "render.queued", "connect-status overlay");
 
          long var10 = Util.getMeasuringTimeMs();
          if (var10 - this.lastNarrationTime > 2000L && var6.getNarratorManager() != null) {
@@ -48,7 +51,6 @@ public abstract class ConnectScreenMixin extends Screen {
          }
 
          super.render(var1, var2, var3, var4);
-         ScreenBackdropRenderer.handle().handle(var6, this.status);
          var5.cancel();
       }
    }

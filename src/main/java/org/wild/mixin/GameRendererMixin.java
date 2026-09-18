@@ -34,7 +34,6 @@ import ru.wild.modules.visuals.AspectRation;
 import ru.wild.modules.visuals.GlowESP;
 import ru.wild.modules.visuals.Hands;
 import ru.wild.render.GlBreadcrumbLogger;
-import ru.wild.render.GlCompatibilityProbe;
 import ru.wild.render.GuiPostProcessor;
 import ru.wild.render.OpenGlStateSnapshot;
 import ru.wild.render.RenderDiagnostics;
@@ -178,10 +177,6 @@ public abstract class GameRendererMixin implements MinecraftContext {
                if (var34 != null && var34.getColorAttachment() instanceof GlTexture var7) {
                   int var8 = var7.getGlId();
                   if (var8 > 0) {
-                     int var9 = GL11.glGetInteger(36006);
-                     int var10 = GL11.glGetInteger(36010);
-                     int var11 = GL11.glGetInteger(36006);
-                     GlCompatibilityProbe.handle(var9);
                      OpenGlStateSnapshot.NetworkState var12 = OpenGlStateSnapshot.handle();
                      boolean var13 = false;
                      int var14 = 0;
@@ -229,9 +224,9 @@ public abstract class GameRendererMixin implements MinecraftContext {
                         }
 
                         OpenGlStateSnapshot.compute(var12);
-                        OpenGlStateSnapshot.handle(36009, var9);
-                        OpenGlStateSnapshot.handle(36008, var10);
-                        OpenGlStateSnapshot.handle(36160, var11);
+                        // Custom drawing uses both raw GL and GlStateManager. Restore
+                        // Minecraft's cache too, and keep read/draw FBOs independent.
+                        OpenGlStateSnapshot.resolve(var12);
                      }
                   }
                }
@@ -280,9 +275,6 @@ public abstract class GameRendererMixin implements MinecraftContext {
          if (var1.getColorAttachment() instanceof GlTexture var3) {
             int var4 = var3.getGlId();
             if (var4 > 0) {
-               int var5 = GL11.glGetInteger(36006);
-               int var6 = GL11.glGetInteger(36010);
-               int var7 = GL11.glGetInteger(36006);
                OpenGlStateSnapshot.NetworkState var8 = OpenGlStateSnapshot.handle();
                int var9 = 0;
 
@@ -314,9 +306,7 @@ public abstract class GameRendererMixin implements MinecraftContext {
                   }
 
                   OpenGlStateSnapshot.compute(var8);
-                  OpenGlStateSnapshot.handle(36009, var5);
-                  OpenGlStateSnapshot.handle(36008, var6);
-                  OpenGlStateSnapshot.handle(36160, var7);
+                  OpenGlStateSnapshot.resolve(var8);
                }
             }
          }

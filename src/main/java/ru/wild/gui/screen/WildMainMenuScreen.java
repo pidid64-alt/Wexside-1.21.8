@@ -26,7 +26,6 @@ import ru.wild.gui.theme.ThemePalette;
 import ru.wild.gui.theme.ThemePaletteRegistry;
 import ru.wild.modules.visuals.Menu;
 import ru.wild.profile.Profile;
-import ru.wild.render.GlCompatibilityProbe;
 import ru.wild.render.MainMenuBackgroundRenderer;
 import ru.wild.render.OpenGlStateSnapshot;
 import ru.wild.render.ScreenRenderDiagnostics;
@@ -348,7 +347,6 @@ public final class WildMainMenuScreen extends Screen implements FrameRenderListe
             this.handle(var7, var8, this.sessionCollect, this.inputAttach, var11);
             if (var3) {
                int var15 = GL11.glGetInteger(36006);
-               GlCompatibilityProbe.handle(var15);
                this.handle(var7, var8, var15, this.sessionCollect, this.inputAttach, var9);
                OpenGlStateSnapshot.process(this.layerSample2);
 
