@@ -56,7 +56,6 @@ import ru.wild.render.MainMenuBackgroundRenderer;
 import ru.wild.render.OpenGlStateSnapshot;
 import ru.wild.render.font.FontObject;
 import ru.wild.render.font.FontRegistry;
-import ru.wild.security.AccountTierResolver;
 import ru.wild.util.math.DampedOscillator;
 import ru.wild.util.math.SmoothedValue;
 import ru.wild.util.math.SpringAnimationSpec;
@@ -1443,7 +1442,6 @@ public final class AltVaultScreen extends Screen implements FrameRenderListener 
          var1.eventAttach = 1.0F;
          var1.colorMeasure = 0.0F;
          var1.clientRefresh = true;
-         AccountTierResolver.handle(var1.data, "");
          this.compute("Signed in as " + var1.data);
          this.execute();
       }

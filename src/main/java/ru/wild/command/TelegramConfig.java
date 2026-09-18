@@ -7,13 +7,16 @@ import java.io.BufferedWriter;
 import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.security.MessageDigest;
+import java.util.Base64;
 import java.util.List;
+import javax.crypto.Cipher;
+import javax.crypto.spec.SecretKeySpec;
 import ru.wild.WildClient;
 import ru.wild.core.Command;
 import ru.wild.network.TelegramApi;
 import ru.wild.sdk.Compile;
 import ru.wild.sdk.Loader;
-import ru.wild.security.TelegramSecretCipher;
 import ru.wild.util.text.ChatLogger;
 
 public class TelegramConfig extends Command {
@@ -31,6 +34,23 @@ public class TelegramConfig extends Command {
       this.handle("dir", List::of);
       this.handle("load", List::of);
       this.check();
+   }
+
+   // inlined from former ru.wild.security.TelegramSecretCipher
+   private static String encrypt(String plain, String key) throws Exception {
+      Cipher c = Cipher.getInstance("AES");
+      c.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(sha256(key), "AES"));
+      return Base64.getEncoder().encodeToString(c.doFinal(plain.getBytes(StandardCharsets.UTF_8)));
+   }
+
+   private static String decrypt(String cipherB64, String key) throws Exception {
+      Cipher c = Cipher.getInstance("AES");
+      c.init(Cipher.DECRYPT_MODE, new SecretKeySpec(sha256(key), "AES"));
+      return new String(c.doFinal(Base64.getDecoder().decode(cipherB64)), StandardCharsets.UTF_8);
+   }
+
+   private static byte[] sha256(String s) throws Exception {
+      return MessageDigest.getInstance("SHA-256").digest(s.getBytes(StandardCharsets.UTF_8));
    }
 
    @Compile
@@ -84,7 +104,7 @@ public class TelegramConfig extends Command {
          } else {
             try {
                TelegramConfig.State var3 = this.onTick();
-               var3.instance = TelegramSecretCipher.handle(
+               var3.instance = encrypt(
                   var2, "gUhDvBzdE4xq5f4BxkPvxv70VY44WsuH1O6s2nZ2F9U1w9y1VVG1mXQcUfbJM2DDUCd8NvtM0L4O1t1nn8FwwAVYlChNncdagiv9UR8FpLXXF8iMAtlWY4mEnYtLHPB3"
                );
                this.handle(var3);
@@ -118,7 +138,7 @@ public class TelegramConfig extends Command {
          } else {
             try {
                TelegramConfig.State var3 = this.onTick();
-               var3.data = TelegramSecretCipher.handle(
+               var3.data = encrypt(
                   var2, "gUhDvBzdE4xq5f4BxkPvxv70VY44WsuH1O6s2nZ2F9U1w9y1VVG1mXQcUfbJM2DDUCd8NvtM0L4O1t1nn8FwwAVYlChNncdagiv9UR8FpLXXF8iMAtlWY4mEnYtLHPB3"
                );
                this.handle(var3);
@@ -313,14 +333,14 @@ public class TelegramConfig extends Command {
          String var2 = "";
          String var3 = "";
          if (var1.instance != null && !var1.instance.isEmpty()) {
-            var2 = TelegramSecretCipher.process(
+            var2 = decrypt(
                var1.instance,
                "gUhDvBzdE4xq5f4BxkPvxv70VY44WsuH1O6s2nZ2F9U1w9y1VVG1mXQcUfbJM2DDUCd8NvtM0L4O1t1nn8FwwAVYlChNncdagiv9UR8FpLXXF8iMAtlWY4mEnYtLHPB3"
             );
          }
 
          if (var1.data != null && !var1.data.isEmpty()) {
-            var3 = TelegramSecretCipher.process(
+            var3 = decrypt(
                var1.data, "gUhDvBzdE4xq5f4BxkPvxv70VY44WsuH1O6s2nZ2F9U1w9y1VVG1mXQcUfbJM2DDUCd8NvtM0L4O1t1nn8FwwAVYlChNncdagiv9UR8FpLXXF8iMAtlWY4mEnYtLHPB3"
             );
          }

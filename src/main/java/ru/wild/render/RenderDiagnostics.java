@@ -15,7 +15,6 @@ import ru.wild.core.DiagnosticCollector;
 import ru.wild.core.DiagnosticSnapshot;
 import ru.wild.core.RenderStateValidator;
 import ru.wild.render.shader.ShaderFailureInfo;
-import ru.wild.security.BuildFingerprint;
 import ru.wild.util.io.DebugSnapshotWriter;
 import ru.wild.util.io.DiagnosticRecordWriter;
 
@@ -26,7 +25,8 @@ public final class RenderDiagnostics {
    private static final long config = 100000000L;
    private static final int state = 65536;
    private static final Logger cache = LogUtils.getLogger();
-   private final BuildFingerprint output = new BuildFingerprint();
+   // replaced BuildFingerprint with simple long hash
+   private long outputHash = System.nanoTime();
    private final DiagnosticRecordWriter current = new DiagnosticRecordWriter();
    private final RenderDiagnosticBuffer active = new RenderDiagnosticBuffer();
    private final DebugSnapshotWriter mode = new DebugSnapshotWriter();
@@ -72,8 +72,28 @@ public final class RenderDiagnostics {
    private boolean scaleAdapt;
 
    private RenderDiagnostics() {
-      this.current.handle(this.output);
+      this.current.handle(outputHash);
       this.measure();
+   }
+
+   private void fingerprintHandle(int v) {
+      outputHash ^= v & 255L;
+      outputHash *= 1099511628211L;
+      outputHash ^= v >>> 8 & 255L;
+      outputHash *= 1099511628211L;
+      outputHash ^= v >>> 16 & 255L;
+      outputHash *= 1099511628211L;
+      outputHash ^= v >>> 24 & 255L;
+      outputHash *= 1099511628211L;
+   }
+
+   private void fingerprintProcess(long v) {
+      fingerprintHandle((int)v);
+      fingerprintHandle((int)(v >>> 32));
+   }
+
+   private long fingerprintValue() {
+      return outputHash;
    }
 
    public static RenderDiagnostics handle() {
@@ -107,7 +127,7 @@ public final class RenderDiagnostics {
 
       this.animator = true;
       this.process(513);
-      boolean var1 = RenderStateValidator.handle(this.output);
+      boolean var1 = RenderStateValidator.handle();
       if (!var1) {
          this.process(12289, 513);
       }
@@ -151,8 +171,8 @@ public final class RenderDiagnostics {
 
       this.target = true;
       this.process(1025);
-      this.output.handle(var1);
-      this.output.handle(var2);
+      fingerprintHandle(var1);
+      fingerprintHandle(var2);
    }
 
    public void prepare() {
@@ -186,14 +206,14 @@ public final class RenderDiagnostics {
 
    public void handle(DiagnosticCollector var1) {
       if (var1 != null) {
-         this.output.handle(var1.handle());
+         fingerprintProcess(var1.handle());
          var1.handle(this.current);
       }
    }
 
    public void onTick() {
       long var1 = System.nanoTime();
-      int var3 = (int)(this.output.handle() ^ var1 >>> 13 ^ 20481L);
+      int var3 = (int)(fingerprintValue() ^ var1 >>> 13 ^ 20481L);
       this.responseCompute = resolve(var3);
       this.providerFetch = RenderDiagnosticKind.handle(20481);
       this.previous = true;
@@ -377,7 +397,7 @@ public final class RenderDiagnostics {
    }
 
    public long load() {
-      return this.output.handle();
+      return fingerprintValue();
    }
 
    public long save() {
@@ -397,8 +417,8 @@ public final class RenderDiagnostics {
    }
 
    private void process(int var1) {
-      this.output.handle(var1);
-      this.output.process(this.selection);
+      fingerprintHandle(var1);
+      fingerprintProcess(this.selection);
    }
 
    private void compute(int var1) {
@@ -407,8 +427,8 @@ public final class RenderDiagnostics {
 
    private void process(int var1, int var2) {
       long var3 = System.nanoTime();
-      int var5 = (int)(this.output.handle() ^ var3 >>> 11 ^ (long)var1 << 16 ^ var2);
-      this.active.handle(var3, var5, var1, var2, this.output.handle());
+      int var5 = (int)(fingerprintValue() ^ var3 >>> 11 ^ (long)var1 << 16 ^ var2);
+      this.active.handle(var3, var5, var1, var2, fingerprintValue());
       this.responseCompute = resolve(var5);
       this.providerFetch = RenderDiagnosticKind.handle(var1);
       this.handle(var3, var5, var1, var2);
@@ -431,7 +451,7 @@ public final class RenderDiagnostics {
       long var1 = System.nanoTime();
       if (var1 - this.enabled >= 250000000L) {
          this.enabled = var1;
-         this.itemProject = "0x" + Long.toUnsignedString(this.output.handle(), 16);
+         this.itemProject = "0x" + Long.toUnsignedString(fingerprintValue(), 16);
          this.sourceSchedule = Integer.toString(this.active.handle());
          this.timerRender = Long.toString(this.selection);
          this.animationSchedule = Integer.toString(this.scaleSave);
@@ -464,7 +484,7 @@ public final class RenderDiagnostics {
             this.moduleCollect = "Ошибка слепка";
             short var4 = 16385;
             int var5 = var9.getClass().getName().hashCode();
-            long var6 = this.output.handle();
+            long var6 = fingerprintValue();
             int var8 = (int)(var6 ^ var5 ^ var4);
             this.active.handle(System.nanoTime(), var8, var4, var5, var6);
             this.responseCompute = resolve(var8);

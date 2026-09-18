@@ -3,7 +3,6 @@ package ru.wild.render;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import org.lwjgl.opengl.GL11;
-import ru.wild.security.BuildFingerprint;
 
 public final class GlErrorNames {
    private GlErrorNames() {
@@ -48,12 +47,8 @@ public final class GlErrorNames {
       }
    }
 
-   static void handle(BuildFingerprint var0) {
-      if (var0 != null) {
-         var0.handle(handle());
-         var0.handle(process());
-         var0.handle(compute());
-      }
+   // old method that took BuildFingerprint - now no-op for compat
+   static void handle(Object var0) {
    }
 
    public static void handle(DataOutputStream var0) throws IOException {
