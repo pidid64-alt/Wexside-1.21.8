@@ -8,6 +8,7 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.MinecraftClient;
 import org.wild.module.api.Module;
 import org.wild.module.api.ModuleRegister;
@@ -22,13 +23,40 @@ import ru.wild.api.module.ModuleRoles;
    description = "Безопасное скрытие клиента возврат Ctrl + Right Shift или напишите свой логин в чат."
 )
 public class UnHook extends Module {
-   public final String source = System.getProperty("user.home") + "/AppData/Roaming/.tlauncher/legacy/Minecraft/game/";
+   public final String source = resolveSource();
    private static String previous = "1";
    public static boolean target = false;
    public static File pending;
    private final List<Module> latest = new ArrayList<>();
 
    public UnHook() {
+   }
+
+   /**
+    * Куда складывать "очищенный" лог.
+    *
+    * Раньше путь был захардкожен в TLauncher-профиль
+    * (~/AppData/Roaming/.tlauncher/legacy/Minecraft/game/) — на телефоне и на любом
+    * другом лаунчере такой папки нет, и лог никуда не писался. Теперь:
+    *   1. -Dwild.gamedir=... — если путь нужно задать руками;
+    *   2. реальная папка игры (работает и на Android);
+    *   3. старый TLauncher-путь — только если папки игры почему-то нет.
+    */
+   private static String resolveSource() {
+      String var0 = System.getProperty("wild.gamedir");
+      if (var0 != null && !var0.isBlank()) {
+         return new File(var0.trim()).getAbsolutePath();
+      }
+
+      try {
+         File var1 = FabricLoader.getInstance().getGameDir().toFile();
+         if (var1.isDirectory()) {
+            return var1.getAbsolutePath();
+         }
+      } catch (Throwable var3) {
+      }
+
+      return System.getProperty("user.home") + "/AppData/Roaming/.tlauncher/legacy/Minecraft/game/";
    }
 
    @Override
@@ -127,6 +155,10 @@ public class UnHook extends Module {
    }
 
    private void tick() {
+      if (!System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("win")) {
+         return;
+      }
+
       try {
          String var1 = MinecraftClient.getInstance().runDirectory.getAbsolutePath().replace("\\", "\\\\");
          String var2 = "*FunTime*;*Wild*;*Execution*;*baritone*;*bariton*";

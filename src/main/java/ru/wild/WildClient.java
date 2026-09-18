@@ -5,6 +5,8 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map.Entry;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
@@ -91,7 +93,11 @@ import ru.wild.util.text.KeybindPresets;
 public class WildClient implements ClientModInitializer {
    public static WildClient instance;
    public FeatureManager data;
-   private static final File animator = new File(System.getProperty("wild.root", "C:/WildClient"));
+   private static final String rootOverride = "wild.root";
+   private static final String rootEnv = "WILD_ROOT";
+   private static final String rootName = "WildClient";
+   private static final String legacyRoot = "C:/WildClient";
+   private static final File animator = resolveRoot();
    public final String context = "Wild";
    public final String config = "v1";
    public final String state = "1.21.8";
@@ -131,6 +137,93 @@ public class WildClient implements ClientModInitializer {
 
    public static File process() {
       return animator;
+   }
+
+   /**
+    * Корень клиента (конфиги, аккаунты, звуки, foundry, прокси...).
+    *
+    * Раньше тут был захардкожен "C:/WildClient" — на Android (Pojav и прочие лаунчеры)
+    * диска C: нет, папка не создавалась и клиент падал на первом же обращении к файлам.
+    * Теперь путь выбирается по порядку, и "C:/WildClient" больше не используется как корень:
+    *
+    *   1. -Dwild.root=... / переменная окружения WILD_ROOT — явный выбор пользователя;
+    *   2. <папка игры>/WildClient — рядом с игрой: работает и на телефоне, и на любом диске;
+    *   3. <домашняя папка>/WildClient;
+    *   4. <temp>/WildClient — последний вариант, если ничего не пишется.
+    *
+    * Содержимое старого C:/WildClient переносится в новый корень см. migrateLegacyRoot().
+    */
+   private static File resolveRoot() {
+      String var0 = System.getProperty(rootOverride);
+      if (var0 == null || var0.isBlank()) {
+         var0 = System.getenv(rootEnv);
+      }
+
+      File var1;
+      if (var0 != null && !var0.isBlank()) {
+         var1 = prepare(new File(var0.trim()));
+         if (var1 != null) {
+            return var1;
+         }
+
+         System.out.println("[Client] cannot use " + rootOverride + "=" + var0 + ", falling back");
+      }
+
+      File var2 = gameDir();
+      if (var2 != null) {
+         var1 = prepare(new File(var2, rootName));
+         if (var1 != null) {
+            return var1;
+         }
+      }
+
+      String var3 = System.getProperty("user.home");
+      if (var3 != null && !var3.isBlank()) {
+         var1 = prepare(new File(var3, rootName));
+         if (var1 != null) {
+            return var1;
+         }
+      }
+
+      var1 = prepare(new File(System.getProperty("java.io.tmpdir", "."), rootName));
+      if (var1 != null) {
+         return var1;
+      }
+
+      return new File(rootName).getAbsoluteFile();
+   }
+
+   /** Создаёт папку, если её нет, и возвращает её только когда в неё реально можно писать. */
+   private static File prepare(File var0) {
+      if (var0 == null) {
+         return null;
+      }
+
+      try {
+         if (!var0.isDirectory()) {
+            var0.mkdirs();
+         }
+      } catch (Throwable var2) {
+      }
+
+      return writable(var0) ? var0.getAbsoluteFile() : null;
+   }
+
+   /** Папка уже существует и в неё можно писать. Ничего не создаёт. */
+   private static boolean writable(File var0) {
+      try {
+         return var0 != null && var0.isDirectory() && var0.canWrite();
+      } catch (Throwable var1) {
+         return false;
+      }
+   }
+
+   private static File gameDir() {
+      try {
+         return FabricLoader.getInstance().getGameDir().toFile();
+      } catch (Throwable var1) {
+         return null;
+      }
    }
 
    public static ShaderRenderer compute() {
@@ -308,11 +401,60 @@ public class WildClient implements ClientModInitializer {
 
    @NotCompile
    private void attachEvent() {
-      if (!animator.exists() && !animator.mkdirs()) {
+      if (!animator.isDirectory() && !animator.mkdirs()) {
          System.out.println("[Client] cannot create root directory: " + animator.getAbsolutePath());
-      } else {
-         File var1 = new File(FabricLoader.getInstance().getGameDir().toFile(), "Wild");
-         handle(var1.toPath(), animator.toPath());
+      }
+
+      System.out.println("[Client] root directory: " + animator.getAbsolutePath());
+      File var1 = new File(FabricLoader.getInstance().getGameDir().toFile(), "Wild");
+      handle(var1.toPath(), animator.toPath());
+      migrateLegacyRoot();
+   }
+
+   /**
+    * Одноразово подтягивает данные из старого захардкоженного C:/WildClient в новый корень.
+    * Ничего не удаляет: старая папка остаётся на диске как есть.
+    */
+   @NotCompile
+   private void migrateLegacyRoot() {
+      try {
+         File var1 = new File(animator, ".wild-migrated");
+         if (var1.exists()) {
+            return;
+         }
+
+         List<File> var2 = new ArrayList<>();
+         var2.add(new File(legacyRoot));
+         var2.add(new File(System.getProperty("user.home", "."), rootName));
+         List<File> var3 = new ArrayList<>();
+
+         for (File var4 : var2) {
+            try {
+               if (var4.isDirectory() && !Files.isSameFile(var4.toPath(), animator.toPath())) {
+                  var3.add(var4);
+               }
+            } catch (Throwable var8) {
+            }
+         }
+
+         if (var3.isEmpty()) {
+            return;
+         }
+
+         System.out.println("[Client] migrating old client data into " + animator.getAbsolutePath());
+         Thread var5 = new Thread(() -> {
+            for (File var1x : var3) {
+               handle(var1x.toPath(), animator.toPath());
+            }
+
+            try {
+               Files.createFile(var1.toPath());
+            } catch (Throwable var2x) {
+            }
+         }, "Wild-Client-Migrate");
+         var5.setDaemon(true);
+         var5.start();
+      } catch (Throwable var6) {
       }
    }
 
