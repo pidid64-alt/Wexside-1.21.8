@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import csv
 import datetime as _dt
 import hashlib
 import json
@@ -55,6 +56,7 @@ import re
 import subprocess
 import sys
 import time
+import zipfile
 
 # ---------------------------------------------------------------------------
 # Публичный ключ, вшитый в клиент (ru.wild.security.BuildSignature / LicenseVerifier)
@@ -458,35 +460,24 @@ def cmd_issue(args) -> int:
     hwid = normalize_hwid(args.hwid)
 
     now_ms = int(time.time() * 1000)
-    if args.until:
-        valid_until = parse_until(args.until)
-    else:
-        valid_until = now_ms + int(round(args.days * 86400000))
-
+    valid_until = resolve_valid_until(now_ms, args.days, args.until)
     if valid_until <= now_ms:
         raise SystemExit(
             f"validUntil в прошлом: {fmt_epoch_ms(valid_until)} (сейчас {fmt_epoch_ms(now_ms)})"
         )
 
-    payload = {"validUntil": valid_until, "hwidHash": hwid}
+    claims = {}
     for claim in args.claim or []:
         if "=" not in claim:
             raise SystemExit(f"--claim ожидает key=value, получено: {claim}")
         key, _, value = claim.partition("=")
-        payload[key.strip()] = value
+        claims[key.strip()] = value
 
-    payload_bytes = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    signature = sign(payload_bytes, seed)
-    if not verify(signature, payload_bytes, public_key(seed)):
-        raise SystemExit("внутренняя ошибка: подпись не проходит самопроверку")
-
-    license_doc = {"payload": _b64url(payload_bytes), "signature": _b64url(signature)}
-    text = json.dumps(license_doc, ensure_ascii=False, indent=2) + "\n"
-
+    license_doc, _, signature = build_license(seed, valid_until, hwid, claims)
     with open(args.out, "w", encoding="utf-8") as handle:
-        handle.write(text)
+        handle.write(dumps_license(license_doc))
 
-    client_ok = verify(signature, payload_bytes, bytes.fromhex(CLIENT_PUBLIC_KEY_HEX))
+    client_ok = verify(signature, _unb64url(license_doc["payload"]), CLIENT_PUBLIC_KEY)
     print(f"лицензия записана: {args.out}")
     print(f"срок действия:    {fmt_epoch_ms(valid_until)}")
     print(f"hwidHash:         {hwid}")
@@ -529,6 +520,364 @@ def cmd_verify(args) -> int:
     return 0 if signature_ok else 1
 
 
+# ---------------------------------------------------------------------------
+# Ядро выпуска лицензий (используется CLI, пакетной выдачей и сервисом)
+# ---------------------------------------------------------------------------
+CLIENT_PUBLIC_KEY = bytes.fromhex(CLIENT_PUBLIC_KEY_HEX)
+
+
+def resolve_valid_until(now_ms: int, days: float | None = None, until: str | None = None) -> int:
+    """Считает validUntil: либо из --days, либо из --until (дата/ISO/epoch-ms)."""
+    if until:
+        return parse_until(str(until))
+    if days is None:
+        raise SystemExit("нужно указать срок: --days или --until")
+    return now_ms + int(round(float(days) * 86400000))
+
+
+def build_license(seed: bytes, valid_until: int, hwid_hash: str, claims: dict | None = None):
+    """Собирает документ лицензии. Возвращает (doc, payload_bytes, signature)."""
+    payload = {"validUntil": int(valid_until), "hwidHash": hwid_hash}
+    if claims:
+        payload.update(claims)
+
+    payload_bytes = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    signature = sign(payload_bytes, seed)
+    if not verify(signature, payload_bytes, public_key(seed)):
+        raise RuntimeError("внутренняя ошибка: подпись не проходит самопроверку")
+    return {"payload": _b64url(payload_bytes), "signature": _b64url(signature)}, payload_bytes, signature
+
+
+def dumps_license(doc: dict) -> str:
+    return json.dumps(doc, ensure_ascii=False, indent=2) + "\n"
+
+
+def accepted_by_client(doc: dict, public_key_bytes: bytes | None = None) -> bool:
+    """Проверит ли выпущенную лицензию клиент.
+
+    По умолчанию используется публичный ключ, вшитый в текущую сборку клиента;
+    можно передать свой (например, тестовый) — для проверок в тестах.
+    """
+    payload_bytes = _unb64url(doc["payload"])
+    return verify(_unb64url(doc["signature"]), payload_bytes, public_key_bytes or CLIENT_PUBLIC_KEY)
+
+
+# ---------------------------------------------------------------------------
+# Allowlist — кому сервис продления имеет право выдавать лицензию
+# ---------------------------------------------------------------------------
+ALLOWLIST_VERSION = 1
+
+
+class Allowlist:
+    """Список клиентов с их правами: сервис продлевает только эти HWID.
+
+    Формат файла:
+        {"version": 1, "generatedAt": <epoch-ms>, "entries": [
+            {"hwid": "<sha256 hex>", "label": "Иван", "validUntil": <epoch-ms>, "note": ""}
+        ]}
+    """
+
+    def __init__(self, path: str | None):
+        self.path = path
+        self._entries: dict[str, dict] = {}
+        self._mtime: float | None = None
+        if path and os.path.exists(path):
+            self.reload(force=True)
+
+    # -- чтение/запись ------------------------------------------------------
+    def reload(self, force: bool = False) -> dict[str, dict]:
+        if not self.path or not os.path.exists(self.path):
+            self._entries = {}
+            self._mtime = None
+            return self._entries
+        mtime = os.path.getmtime(self.path)
+        if not force and self._mtime == mtime:
+            return self._entries
+        with open(self.path, "r", encoding="utf-8") as handle:
+            doc = json.load(handle)
+        entries: dict[str, dict] = {}
+        for raw in doc.get("entries", []):
+            hwid = normalize_hwid(str(raw.get("hwid", "")))
+            if not hwid:
+                continue
+            entries[hwid] = {
+                "hwid": hwid,
+                "label": str(raw.get("label", "")),
+                "validUntil": int(raw.get("validUntil", 0) or 0),
+                "note": str(raw.get("note", "")),
+            }
+        self._entries = entries
+        self._mtime = mtime
+        return self._entries
+
+    def save(self) -> None:
+        if not self.path:
+            raise SystemExit("не задан путь к allowlist (--file)")
+        doc = {
+            "version": ALLOWLIST_VERSION,
+            "generatedAt": int(time.time() * 1000),
+            "entries": sorted(self._entries.values(), key=lambda item: (item["label"], item["hwid"])),
+        }
+        tmp = f"{self.path}.tmp"
+        with open(tmp, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(doc, ensure_ascii=False, indent=2) + "\n")
+        os.replace(tmp, self.path)
+        self.reload(force=True)
+
+    # -- операции -----------------------------------------------------------
+    def add(self, hwid: str, valid_until: int, label: str = "", note: str = "") -> dict:
+        normalized = normalize_hwid(hwid)
+        self.reload()
+        entry = {"hwid": normalized, "label": label, "validUntil": int(valid_until), "note": note}
+        self._entries[normalized] = entry
+        self.save()
+        return entry
+
+    def remove(self, hwid: str) -> bool:
+        normalized = normalize_hwid(hwid)
+        self.reload()
+        if normalized in self._entries:
+            del self._entries[normalized]
+            self.save()
+            return True
+        return False
+
+    def get(self, hwid: str) -> dict | None:
+        self.reload()
+        return self._entries.get(normalize_hwid(hwid))
+
+    def __len__(self) -> int:
+        self.reload()
+        return len(self._entries)
+
+
+# ---------------------------------------------------------------------------
+# Пакетная выдача
+# ---------------------------------------------------------------------------
+def parse_client_list(text: str) -> list[dict]:
+    """Разбирает список клиентов: `hwid[,label[,days|until]]`, `#` — комментарий.
+
+    Поддерживается CSV с заголовком, где есть колонка `hwid`; остальные колонки
+    с известными именами (label, days, until) подхватываются по имени.
+    """
+    rows: list[dict] = []
+    lines = [line for line in text.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+    if not lines:
+        return rows
+
+    delimiter = max((",", ";", "\t"), key=lambda ch: lines[0].count(ch))
+    if lines[0].count(delimiter) == 0:
+        delimiter = ","
+
+    reader = csv.reader(lines, delimiter=delimiter)
+    parsed = [row for row in reader if any(cell.strip() for cell in row)]
+    if not parsed:
+        return rows
+
+    header = [cell.strip().lower() for cell in parsed[0]]
+    has_header = "hwid" in header
+    columns = header if has_header else ["hwid", "label", "days"]
+    body = parsed[1:] if has_header else parsed
+
+    for index, row in enumerate(body, 1):
+        item: dict = {"line": index}
+        for position, cell in enumerate(row):
+            if position >= len(columns):
+                break
+            key = columns[position]
+            value = cell.strip()
+            if value:
+                item[key] = value
+        # дата, попавшая в колонку days (частый случай в списках клиентов), — это until
+        maybe_date = item.get("days", "")
+        if maybe_date and not _is_number(maybe_date) and _looks_like_date(maybe_date):
+            item.pop("days")
+            item.setdefault("until", maybe_date)
+        rows.append(item)
+    return rows
+
+
+def _is_number(value: str) -> bool:
+    try:
+        float(value)
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
+def _looks_like_date(value: str) -> bool:
+    value = value.strip()
+    if re.fullmatch(r"\d{10,}", value):
+        return True
+    return bool(re.match(r"^\d{4}-\d{2}-\d{2}", value))
+
+
+def cmd_issue_batch(args) -> int:
+    seed = load_seed(args.key)
+    if args.input == "-":
+        text = sys.stdin.read()
+    else:
+        with open(args.input, "r", encoding="utf-8") as handle:
+            text = handle.read()
+
+    rows = parse_client_list(text)
+    if not rows:
+        raise SystemExit("список клиентов пуст")
+
+    os.makedirs(args.out_dir, exist_ok=True)
+    report_path = args.report
+    zip_handle = zipfile.ZipFile(args.zip, "w", zipfile.ZIP_DEFLATED) if args.zip else None
+
+    report: list[dict] = []
+    seen: set[str] = set()
+    issued = 0
+    now_ms = int(time.time() * 1000)
+
+    try:
+        for row in rows:
+            line_no = row["line"]
+            raw_hwid = row.get("hwid", "")
+            label = row.get("label", "")
+            record = {
+                "line": line_no,
+                "hwid": "",
+                "label": label,
+                "status": "error",
+                "validUntil": "",
+                "file": "",
+                "message": "",
+            }
+
+            if not raw_hwid:
+                record["message"] = "нет колонки hwid"
+                report.append(record)
+                continue
+
+            hwid = normalize_hwid(raw_hwid)
+            record["hwid"] = hwid
+            if hwid in seen:
+                record["status"] = "duplicate"
+                record["message"] = "HWID уже встречался в списке"
+                report.append(record)
+                continue
+
+            try:
+                row_until = row.get("until")
+                row_days = row.get("days")
+                if row_until or row_days:
+                    # срок из строки списка имеет приоритет над значениями по умолчанию
+                    valid_until = resolve_valid_until(
+                        now_ms, float(row_days) if row_days else None, row_until
+                    )
+                else:
+                    valid_until = resolve_valid_until(now_ms, args.days, args.until)
+            except (SystemExit, ValueError) as error:
+                record["message"] = f"некорректный срок: {error}"
+                report.append(record)
+                continue
+
+            if valid_until <= now_ms:
+                record["message"] = f"срок в прошлом: {fmt_epoch_ms(valid_until)}"
+                report.append(record)
+                continue
+
+            doc, _, _ = build_license(seed, valid_until, hwid)
+            # \w сохраняет кириллицу — имена файлов остаются читаемыми
+            safe_label = re.sub(r"[^\w.-]+", "-", label, flags=re.UNICODE).strip("-") or "client"
+            file_name = f"{line_no:04d}_{safe_label}_{hwid[:12]}.license.json"
+            file_path = os.path.join(args.out_dir, file_name)
+            text_doc = dumps_license(doc)
+            with open(file_path, "w", encoding="utf-8") as handle:
+                handle.write(text_doc)
+            if zip_handle:
+                zip_handle.writestr(file_name, text_doc)
+
+            seen.add(hwid)
+            issued += 1
+            record.update(
+                {
+                    "status": "ok",
+                    "validUntil": valid_until,
+                    "file": file_path,
+                    "message": "выдана",
+                }
+            )
+            report.append(record)
+    finally:
+        if zip_handle:
+            zip_handle.close()
+
+    report_path = report_path or os.path.join(args.out_dir, "report.csv")
+    with open(report_path, "w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(
+            handle, fieldnames=["line", "hwid", "label", "status", "validUntil", "file", "message"]
+        )
+        writer.writeheader()
+        writer.writerows(report)
+
+    failed = [item for item in report if item["status"] != "ok"]
+    client_compatible = None
+    first_ok = next((item for item in report if item["status"] == "ok"), None)
+    if first_ok:
+        with open(first_ok["file"], "r", encoding="utf-8") as handle:
+            client_compatible = accepted_by_client(json.load(handle))
+
+    print(f"выдано лицензий: {issued} из {len(report)}")
+    for item in failed:
+        print(f"  строка {item['line']}: {item['status']} — {item['message']} (hwid={item['hwid'][:16]}...)")
+    print(f"отчёт:  {report_path}")
+    print(f"папка:  {args.out_dir}")
+    if args.zip:
+        print(f"архив:  {args.zip}")
+    if client_compatible is not None:
+        print(
+            "проверка вшитым ключом клиента: "
+            + ("ДАННЫЕ" if client_compatible else "ОТКЛОНЕНО — ключ не от владельца клиента")
+        )
+
+    if args.fail_on_error and failed:
+        return 1
+    if issued == 0:
+        return 1
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Allowlist: CLI
+# ---------------------------------------------------------------------------
+def cmd_allowlist(args) -> int:
+    allow = Allowlist(args.file)
+
+    if args.action == "add":
+        valid_until = resolve_valid_until(int(time.time() * 1000), args.days, args.until)
+        entry = allow.add(args.hwid, valid_until, label=args.label or "", note=args.note or "")
+        print(f"добавлено: {entry['hwid']}")
+        print(f"подпись:   {entry['label'] or 'без имени'}")
+        print(f"действует: {fmt_epoch_ms(entry['validUntil'])}")
+        print(f"файл:      {args.file}")
+        return 0
+
+    if args.action == "remove":
+        removed = allow.remove(args.hwid)
+        print(("удалено: " if removed else "не найдено: ") + normalize_hwid(args.hwid))
+        print(f"файл: {args.file}")
+        return 0 if removed else 1
+
+    entries = sorted(allow.reload(force=True).values(), key=lambda item: (item["label"], item["hwid"]))
+    if not entries:
+        print(f"allowlist пуст: {args.file}")
+        return 0
+
+    now_ms = int(time.time() * 1000)
+    print(f"{'HWID':<66} {'ДО КОГДА':<21} {'СТАТУС':<10} ИМЯ")
+    for entry in entries:
+        moment = _dt.datetime.fromtimestamp(entry["validUntil"] / 1000, _dt.timezone.utc)
+        state = "активен" if entry["validUntil"] > now_ms else "истёк"
+        print(f"{entry['hwid']:<66} {moment:%Y-%m-%d %H:%M:%S}  {state:<10} {entry['label']}")
+    print(f"\nвсего: {len(entries)} — {args.file}")
+    return 0
+
+
 def cmd_hwid(_args) -> int:
     short, full = local_hwid()
     print(f"process() (UUID|HOSTNAME)                        → {short}")
@@ -563,6 +912,40 @@ def build_parser() -> argparse.ArgumentParser:
     issue.add_argument("--out", default="license.json", help="куда записать license.json")
     issue.add_argument("--claim", action="append", help="доп. поле payload: key=value (можно повторять)")
     issue.set_defaults(func=cmd_issue)
+
+    batch = sub.add_parser("issue-batch", help="выпустить пакет лицензий по списку клиентов")
+    batch.add_argument("--key", required=True, help="приватный ключ владельца")
+    batch.add_argument("--input", required=True, help="файл списка (CSV/TXT) или - для stdin")
+    batch.add_argument("--days", type=float, default=30.0, help="срок по умолчанию (можно переопределить в строке)")
+    batch.add_argument("--until", help="срок по умолчанию датой (YYYY-MM-DD / ISO / epoch-ms)")
+    batch.add_argument("--out-dir", default="licenses", help="куда складывать файлы лицензий")
+    batch.add_argument("--report", help="CSV-отчёт (по умолчанию <out-dir>/report.csv)")
+    batch.add_argument("--zip", help="дополнительно упаковать выданное в zip-архив")
+    batch.add_argument("--fail-on-error", action="store_true", help="вернуть код 1, если были проблемные строки")
+    batch.set_defaults(func=cmd_issue_batch)
+
+    allow_common = argparse.ArgumentParser(add_help=False)
+    allow_common.add_argument("--file", default="allowlist.json", help="файл allowlist (JSON)")
+
+    allow = sub.add_parser(
+        "allowlist",
+        help="список клиентов, которым сервис продлевает лицензии",
+        parents=[allow_common],
+    )
+    allow_sub = allow.add_subparsers(dest="action", required=True)
+
+    allow_add = allow_sub.add_parser("add", help="добавить/обновить клиента", parents=[allow_common])
+    allow_add.add_argument("--hwid", required=True, help="HWID клиента (64 hex или сырой отпечаток)")
+    allow_add.add_argument("--label", help="имя/пометка клиента")
+    allow_add.add_argument("--note", help="произвольная заметка")
+    allow_add.add_argument("--days", type=float, help="срок от текущего момента")
+    allow_add.add_argument("--until", help="срок датой (YYYY-MM-DD / ISO / epoch-ms)")
+
+    allow_remove = allow_sub.add_parser("remove", help="убрать клиента", parents=[allow_common])
+    allow_remove.add_argument("--hwid", required=True, help="HWID клиента")
+
+    allow_sub.add_parser("list", help="показать список", parents=[allow_common])
+    allow.set_defaults(func=cmd_allowlist)
 
     verify_cmd = sub.add_parser("verify", help="проверить license.json")
     verify_cmd.add_argument("--file", default="license.json", help="файл лицензии")

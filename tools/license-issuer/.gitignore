@@ -1,6 +1,14 @@
-# приватные ключи и тестовые артефакты — в репозиторий не коммитим
+# приватные ключи, персональные данные клиентов и артефакты выдачи — в git не коммитим
 *.pem
 *.key
 keys/
 license*.json
+allowlist.json
+licenses/
+bundle.zip
+report*.csv
+*.log
 __pycache__/
+
+# пример allowlist (allowlist.example.json) — коммитим как шаблон
+!allowlist.example.json

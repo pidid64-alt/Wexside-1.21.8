@@ -51,6 +51,138 @@ python3 wild_license.py verify --file license.json
 
 ---
 
+## Пакетная выдача (`issue-batch`)
+
+Для списка клиентов — одна команда, на выходе папка с лицензиями, CSV-отчёт и опционально zip.
+
+```bash
+python3 wild_license.py issue-batch --key owner-private.pem --input clients.csv \
+        --days 30 --out-dir licenses --zip bundle.zip
+```
+
+`clients.csv` (заголовок опционален; `#` — комментарий; разделитель `,`, `;` или таб):
+
+```csv
+hwid,label,days
+aaaa1111…1111,Иван,30
+bbbb2222…2222,Пётр,90
+ccc3333…3333,Мария,2026-12-31
+```
+
+* колонки распознаются по именам: `hwid` (обязательна), `label`, `days`, `until`;
+* без заголовка порядок фиксированный: `hwid[,label[,days]]`;
+* в колонке `days` можно писать дату (`2026-12-31`) — утилита поймёт;
+* срок из строки перекрывает `--days`/`--until` по умолчанию;
+* дубликаты HWID, пустые и битые строки не роняют процесс: попадают в отчёт со
+  статусом `duplicate`/`error`, остальные лицензии выдаются;
+* `--fail-on-error` заставит вернуть код 1, если были проблемные строки (удобно в CI/скриптах);
+* в конце печатается проверка: примет ли выпущенную лицензию текущая сборка клиента.
+
+Результат: `licenses/0001_Иван_aaaa1111aaaa.license.json`, `licenses/report.csv`, `bundle.zip`.
+
+---
+
+## Сервис выдачи и продления (`license_service.py`)
+
+Держит приватный ключ владельца и подписывает лицензии по HTTP. Предназначен для
+запуска **у владельца** (локально или на его сервере), а не у клиентов.
+
+```bash
+python3 license_service.py --key owner-private.pem --allowlist allowlist.json \
+        --token "$WILD_LICENSE_ADMIN_TOKEN"
+# WildLicense service → http://127.0.0.1:8787
+```
+
+### Endpoints
+
+| Метод | Путь | Кто | Что делает |
+|---|---|---|---|
+| `GET` | `/healthz` | все | статус, ключ подписи, размер allowlist (секретов нет) |
+| `GET` | `/` | все | человекочитаемая страница статуса |
+| `GET` | `/v1/license?hwid=<hex>` | админ | готовая лицензия для HWID |
+| `POST` | `/v1/issue` | админ | `{"hwid":"…","days":30}` или `{"hwid":"…","until":"2026-12-31"}` |
+| `POST` | `/v1/renew` | клиент из allowlist | `{"hwid":"…"}` — продление на срок из allowlist |
+
+Ответ содержит саму лицензию:
+
+```json
+{
+  "hwidHash": "…", "validUntil": 1798675200000, "admin": true,
+  "acceptedByClient": true,
+  "license": { "payload": "…", "signature": "…" }
+}
+```
+
+Токен: `Authorization: Bearer <токен>` или `X-Admin-Token: <токен>`
+(также берётся из env `WILD_LICENSE_ADMIN_TOKEN` или `--token-file`).
+
+### Модель прав
+
+* `/v1/renew` **не создаёт права**: если HWID нет в allowlist — `403 not_allowed`,
+  если срок в allowlist истёк — `403 subscription_expired`.
+  Сервис только подтверждает то, что владелец уже разрешил;
+* `/v1/issue` и `/v1/license` требуют админ-токен — это инструмент владельца,
+  а не клиентский endpoint;
+* `--no-renew` полностью выключает самообслуживание, оставляя только админскую выдачу;
+* `--max-days` (по умолчанию 400) ограничивает срок, который сервис выдаст даже с админ-токеном.
+
+### Безопасность по умолчанию
+
+* слушает **только `127.0.0.1`**; наружу — лишь явным `--host`, желательно с
+  `--tls-cert/--tls-key` (при не-loopback адресе сервис печатает предупреждение);
+* не стартует без админ-токена короче 16 символов;
+* лимит тела запроса 64 КБ и лимит частоты обращений с одного IP (`--rate-limit`, `--rate-window`);
+* токен сравнивается в постоянном времени (`hmac.compare_digest`), в логи не попадают
+  ни токены, ни тела запросов;
+* при старте сверяет свой публичный ключ с вшитым в клиент и предупреждает,
+  если подписи этой сборкой приняты не будут.
+
+### Allowlist
+
+```bash
+python3 wild_license.py allowlist --file allowlist.json add \
+        --hwid <hash> --label "Иван" --days 90
+python3 wild_license.py allowlist --file allowlist.json add \
+        --hwid <hash> --label "Мария" --until 2026-12-31
+python3 wild_license.py allowlist --file allowlist.json list
+python3 wild_license.py allowlist --file allowlist.json remove --hwid <hash>
+```
+
+Формат смотрите в `allowlist.example.json`. Сервис перечитывает файл при изменении
+(по mtime), поэтому перезапуск не нужен. Реальные `allowlist.json` содержат HWID
+клиентов и в git не коммитятся.
+
+### Пример: клиент забирает продление
+
+```bash
+curl -s -X POST https://license.example.com/v1/renew \
+     -H 'Content-Type: application/json' \
+     -d "{\"hwid\":\"$(python3 wild_license.py hwid | head -1 | awk '{print $NF}')\"}" \
+  | python3 -c "import json,sys; print(json.load(sys.stdin)['license'])" > license.json
+```
+
+Для продакшена сервис стоит держать за reverse-proxy с TLS и лимитами
+(nginx: `limit_req`, `client_max_body_size 64k`) либо под systemd:
+
+```ini
+[Unit]
+Description=WildClient license service
+After=network-online.target
+
+[Service]
+WorkingDirectory=/opt/wild-license
+EnvironmentFile=/opt/wild-license/service.env   # WILD_LICENSE_ADMIN_TOKEN=…
+ExecStart=/usr/bin/python3 license_service.py --key /opt/wild-license/owner-private.pem \
+          --allowlist /opt/wild-license/allowlist.json --host 127.0.0.1 --port 8787
+Restart=on-failure
+User=wildlicense
+
+[Install]
+WantedBy=multi-user.target
+```
+
+---
+
 ## Формат
 
 `license.json`:
@@ -108,6 +240,9 @@ python3 wild_license.py verify --file license.json
 ## Проверка работоспособности (что уже протестировано)
 
 ```bash
+# 0. Автотесты: 16 тестов, включая негативные (без токена, чужой HWID, лимиты)
+cd tools/license-issuer && python3 -m unittest discover -s tests -v
+
 # 1. Реализация Ed25519 совпадает с RFC 8032
 python3 wild_license.py selftest
 
@@ -142,8 +277,12 @@ python3 wild_license.py verify --file license-test.json --pubkey keys/test-publi
 ## Файлы
 
 ```
-wild_license.py     утилита (stdlib-only)
-README.md           этот файл
+wild_license.py            CLI: selftest / genkey / issue / issue-batch / allowlist / verify / hwid
+license_service.py         HTTP-сервис выдачи и продления (держит приватный ключ)
+allowlist.example.json     шаблон allowlist для сервиса
+tests/test_license_tools.py  автотесты (stdlib unittest, сеть — только localhost)
+README.md                  этот файл
 ```
 
-Ключи, тестовые лицензии и `license*.json` в git не попадают (см. `.gitignore`).
+Приватные ключи, реальные `allowlist.json`, выданные лицензии и `licenses/`
+в git не попадают (см. `.gitignore` в этом каталоге).

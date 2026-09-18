@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "generatedAt": 1789751893457,
+  "entries": [
+    {
+      "hwid": "bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222",
+      "label": "Иван",
+      "validUntil": 1797527881206,
+      "note": "оплатил 90 дней, продление включено"
+    },
+    {
+      "hwid": "6e80df82267f0938616522c992186d33497af847d8b263dbfd44a04849af2f18",
+      "label": "Мария",
+      "validUntil": 1798675200000,
+      "note": "до 2026-12-31"
+    }
+  ]
+}
