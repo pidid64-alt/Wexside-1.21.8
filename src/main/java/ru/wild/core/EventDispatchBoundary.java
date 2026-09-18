@@ -1,30 +1,29 @@
 package ru.wild.core;
 
-import ru.wild.security.AccessGuard;
-import ru.wild.security.GuardViolationException;
-
 public final class EventDispatchBoundary {
    private EventDispatchBoundary() {
    }
 
    public static void handle() {
-      try {
-         AccessGuard.handle();
-      } catch (GuardViolationException var1) {
-         throw handle(var1);
-      }
+      // security removed - no-op
    }
 
    public static void handle(Runnable var0) {
-      try {
+      if (var0 != null) {
          var0.run();
-      } catch (GuardViolationException var2) {
-         throw handle(var2);
       }
    }
 
-   public static RuntimeException handle(GuardViolationException var0) {
-      Runtime.getRuntime().halt(0);
-      return var0;
+   public static RuntimeException handle(Throwable var0) {
+      if (var0 instanceof RuntimeException re) {
+         throw re;
+      }
+      throw new RuntimeException(var0);
+   }
+
+   // backward compat stub - old signature that took GuardViolationException
+   // now just delegates to generic handler
+   public static RuntimeException handleGeneric(Throwable var0) {
+      return handle(var0);
    }
 }

@@ -83,9 +83,6 @@ import ru.wild.render.shader.WorldEffectsRenderer;
 import ru.wild.render.texture.MainFramebufferBinding;
 import ru.wild.render.texture.SvgHelper;
 import ru.wild.sdk.NotCompile;
-import ru.wild.security.AccountTierResolver;
-import ru.wild.security.GuardViolationException;
-import ru.wild.security.LicenseHeartbeatService;
 import ru.wild.util.render.PackedColor;
 import ru.wild.util.render.RoundedRectRenderer;
 import ru.wild.util.text.KeybindPresets;
@@ -333,7 +330,6 @@ public class WildClient implements ClientModInitializer {
          handle((Runnable) () -> this.selection.handle());
       }
 
-      handle(() -> AccountTierResolver.handle(MinecraftClient.getInstance()));
       handle((Runnable) () -> ProxyManager.handle());
       handle(() -> BravoHvhServerRegistrar.handle(MinecraftClient.getInstance()));
       handle(() -> EventHandlerInvoker.handle(ServerTickRateTracker.class));
@@ -391,8 +387,6 @@ public class WildClient implements ClientModInitializer {
    private static <T> T handle(Supplier<T> var0) {
       try {
          return (T)var0.get();
-      } catch (GuardViolationException var2) {
-         throw EventDispatchBoundary.handle(var2);
       } catch (Throwable var3) {
          System.out.println("[Client] init failed: " + var3.getClass().getSimpleName() + ": " + var3.getMessage());
          return null;
@@ -510,8 +504,6 @@ public class WildClient implements ClientModInitializer {
    private static void handle(Runnable var0) {
       try {
          var0.run();
-      } catch (GuardViolationException var2) {
-         throw EventDispatchBoundary.handle(var2);
       } catch (Throwable var3) {
       }
    }
@@ -680,7 +672,6 @@ public class WildClient implements ClientModInitializer {
          handle(AutoBuy::fetch);
          handle(RotationRecorder::blendMatrix);
          handle(NeuroEngine::process);
-         handle(LicenseHeartbeatService::process);
          handle(MusicPlayerHudRenderer::encodePoint);
          handle(RotationCommand::resolve);
          handle(HttpDownloader::compute);
@@ -791,8 +782,6 @@ public class WildClient implements ClientModInitializer {
                   }
 
                   Thread.sleep(Math.max(var4, 1L));
-               } catch (GuardViolationException var8) {
-                  throw EventDispatchBoundary.handle(var8);
                } catch (InterruptedException var9) {
                   Thread.currentThread().interrupt();
                   break;

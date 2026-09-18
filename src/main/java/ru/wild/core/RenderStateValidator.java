@@ -4,28 +4,23 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import org.joml.Matrix4f;
-import ru.wild.security.BuildFingerprint;
 
 public final class RenderStateValidator {
    private RenderStateValidator() {
    }
 
-   public static boolean handle(BuildFingerprint var0) {
+   public static boolean handle() {
       try {
          Matrix4f var1 = RenderSystem.getModelViewMatrix();
-         long var2 = handle(var1);
-         if (var0 != null) {
-            var0.process(var2);
-         }
-
          return process(var1);
       } catch (Throwable var4) {
-         if (var0 != null) {
-            var0.handle(-1160725808);
-         }
-
          return false;
       }
+   }
+
+   // compat overload - old code passed BuildFingerprint, now ignored
+   public static boolean handle(Object var0) {
+      return handle();
    }
 
    public static void handle(DataOutputStream var0) throws IOException {

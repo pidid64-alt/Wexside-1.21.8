@@ -38,7 +38,6 @@ import ru.wild.core.MinecraftContext;
 import ru.wild.modules.misc.PvPSafe;
 import ru.wild.modules.misc.UnHook;
 import ru.wild.modules.visuals.ProtectInfo;
-import ru.wild.security.AccountTierResolver;
 
 @Mixin(ClientPlayNetworkHandler.class)
 public class ClientPlayNetworkHandlerMixin implements MinecraftContext {
@@ -295,7 +294,6 @@ public class ClientPlayNetworkHandlerMixin implements MinecraftContext {
    @Inject(method = "onGameJoin", at = @At("TAIL"))
    private void onGameJoin(GameJoinS2CPacket var1, CallbackInfo var2) {
       EventDispatchBoundary.handle();
-      AccountTierResolver.process(toggleState);
       ClientPlayNetworkHandler var3 = (ClientPlayNetworkHandler)(Object)this;
       if (!(var3 instanceof HeadlessBotPlayHandler) && HeadlessBotEngine.onTick()) {
          HeadlessBotEngine.refresh();

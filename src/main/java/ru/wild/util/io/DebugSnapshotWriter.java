@@ -10,7 +10,6 @@ import java.time.format.DateTimeFormatter;
 import ru.wild.core.RenderStateValidator;
 import ru.wild.render.GlErrorNames;
 import ru.wild.render.RenderDiagnostics;
-import ru.wild.security.WildSnapshotCrypto;
 
 public final class DebugSnapshotWriter {
    private static final DateTimeFormatter instance = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
@@ -30,7 +29,8 @@ public final class DebugSnapshotWriter {
          this.update(var6);
       }
 
-      byte[] var11 = WildSnapshotCrypto.handle(var5.toByteArray());
+      // security removed - write raw without encryption
+      byte[] var11 = var5.toByteArray();
       Path var7 = this.handle();
       Path var8 = var7.resolve(var1.getName(var2) + "-" + instance.format(LocalDateTime.now()) + ".wildsnap");
       Files.write(var8, var11, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);

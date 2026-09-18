@@ -4,46 +4,46 @@ import java.io.ByteArrayInputStream;
 import java.io.DataInputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Base64;
 import java.util.Locale;
 import ru.wild.render.GlErrorNames;
 import ru.wild.render.RenderDiagnosticKind;
-import ru.wild.security.WildSnapshotCrypto;
 
 public final class SnapshotDecoderCli {
    private SnapshotDecoderCli() {
    }
 
    public static void main(String[] var0) throws Exception {
-      if (var0.length < 2) {
-         System.out.println("usage: WildSnapDecoder <x25519-private-der-b64-or-file> <snapshot.wildsnap>");
-      } else {
-         byte[] var1 = handle(var0[0]);
-         byte[] var2 = Files.readAllBytes(Path.of(var0[1]));
-         byte[] var3 = WildSnapshotCrypto.handle(var2, var1);
+      if (var0.length < 1) {
+         System.out.println("usage: WildSnapDecoder <snapshot.wildsnap> [ignored-key]");
+         return;
+      }
+      // security removed - now reads raw snapshots, key param is optional/ignored for compat
+      String snapPath = var0.length >= 2 ? var0[1] : var0[0];
+      byte[] var2 = Files.readAllBytes(Path.of(snapPath));
+      byte[] var3 = var2;
+      // try to detect old encrypted format (WSN1 magic) and skip? For now assume raw.
+      // If file starts with WSN1 (87,83,78,49) it's old encrypted, we can't decrypt without key, so report.
+      if (var2.length >= 4 && var2[0] == 87 && var2[1] == 83 && var2[2] == 78 && var2[3] == 49) {
+         System.out.println("Detected old encrypted format (WSN1). Decryption removed with security folder.");
+         System.out.println("Please use an old build to decrypt or provide raw .wildsnap");
+         return;
+      }
 
-         try (DataInputStream var4 = new DataInputStream(new ByteArrayInputStream(var3))) {
-            int var5 = var4.readInt();
-            int var6 = var4.readInt();
-            System.out.println("# WildSnap Report");
-            System.out.println();
-            System.out.println("- magic: 0x" + Integer.toHexString(var5));
-            System.out.println("- version: " + var6);
+      try (DataInputStream var4 = new DataInputStream(new ByteArrayInputStream(var3))) {
+         int var5 = var4.readInt();
+         int var6 = var4.readInt();
+         System.out.println("# WildSnap Report");
+         System.out.println();
+         System.out.println("- magic: 0x" + Integer.toHexString(var5));
+         System.out.println("- version: " + var6);
 
-            while (var4.available() > 0) {
-               int var7 = Short.toUnsignedInt(var4.readShort());
-               int var8 = var4.readInt();
-               byte[] var9 = var4.readNBytes(var8);
-               handle(var7, var9);
-            }
+         while (var4.available() > 0) {
+            int var7 = Short.toUnsignedInt(var4.readShort());
+            int var8 = var4.readInt();
+            byte[] var9 = var4.readNBytes(var8);
+            handle(var7, var9);
          }
       }
-   }
-
-   private static byte[] handle(String var0) throws Exception {
-      Path var1 = Path.of(var0);
-      String var2 = Files.exists(var1) ? Files.readString(var1) : var0;
-      return Base64.getDecoder().decode(var2.replace("\n", "").replace("\r", "").trim());
    }
 
    private static void handle(int var0, byte[] var1) throws Exception {
