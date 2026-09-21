@@ -7,12 +7,36 @@ import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL30;
 
 public final class GlCompatibilityProbe {
-   private static volatile int instance = -1;
-   private static volatile Boolean data;
-   private static volatile Boolean context;
+    private static volatile int instance = -1;
+    private static volatile Boolean data;
+    private static volatile Boolean context;
+    private static volatile Boolean mobile;
 
-   private GlCompatibilityProbe() {
-   }
+    private GlCompatibilityProbe() {
+    }
+
+    public static boolean isMobile() {
+        if (mobile != null) {
+            return mobile;
+        }
+        synchronized (GlCompatibilityProbe.class) {
+            if (mobile != null) {
+                return mobile;
+            }
+            try {
+                String renderer = GL11.glGetString(7937);
+                if (renderer != null) {
+                    String lower = renderer.toLowerCase();
+                    mobile = lower.contains("opengl es") || lower.contains("arm") || lower.contains("adreno") || lower.contains("mali") || lower.contains("powervr") || lower.contains("apple");
+                } else {
+                    mobile = false;
+                }
+            } catch (Throwable var2) {
+                mobile = false;
+            }
+            return mobile;
+        }
+    }
 
    public static void handle(int var0) {
       if (var0 <= 0) {
@@ -116,8 +140,12 @@ public final class GlCompatibilityProbe {
       }
    }
 
-   public static void handle(MinecraftClient var0) {
-      if (var0 != null && var0.getWindow() != null) {
+    public static void handle(MinecraftClient var0) {
+       if (isMobile()) {
+          return;
+       }
+
+       if (var0 != null && var0.getWindow() != null) {
          Window var1 = var0.getWindow();
          int var2 = var1.getFramebufferWidth();
          int var3 = var1.getFramebufferHeight();

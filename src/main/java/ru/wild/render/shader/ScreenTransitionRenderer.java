@@ -54,8 +54,10 @@ public final class ScreenTransitionRenderer {
       return instance;
    }
 
-   public void handle(Screen var1, Screen var2) {
-      if (var1 != var2) {
+    public void handle(Screen var1, Screen var2) {
+       if (GlCompatibilityProbe.isMobile()) {
+          this.compute();
+       } else if (var1 != var2) {
          if (var1 instanceof FrameRenderListener || var2 instanceof FrameRenderListener) {
             this.compute();
          } else if (GlCompatibilityProbe.handle()) {
